@@ -1,0 +1,40 @@
+// SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+// SPDX-License-Identifier: Apache-2.0
+//
+// MVP side-jar that re-exposes the LG framework classes Ims6.apk imports
+// from stock (com.lge.{config,os,uicc,...}) into a LineageOS build.
+//
+// This jar is meant to be added to PRODUCT_SYSTEM_EXT_BOOT_JARS so its
+// classes land on the bootclasspath of the Phone process and Ims6 (which
+// runs in the com.lge.ims process, sharedUserId android.uid.phone) can
+// resolve them at load time without a uses-library declaration.
+//
+// Future expansion (LGImsPhoneProxy AIDL bridge) will live in this same
+// module — for the MVP we only ship the simple property/feature wrappers
+// and the LGUicc binder client surface.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+java_library {
+    name: "lge-telephony-extras",
+    installable: true,
+    system_ext_specific: true,
+    sdk_version: "core_platform",
+    libs: [
+        "framework",
+        "telephony-common",
+    ],
+    srcs: [
+        "src/**/*.java",
+        "src/**/*.aidl",
+    ],
+}
+
+prebuilt_etc {
+    name: "lge-telephony-extras.xml",
+    src: "lge-telephony-extras.xml",
+    sub_dir: "permissions",
+    system_ext_specific: true,
+}

@@ -179,6 +179,14 @@ PRODUCT_PACKAGES += \
 # Hotword Enrollement
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/permissions/product_privapp-permissions-hotword.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/privapp-permissions-hotword.xml
+# IMS
+PRODUCT_PACKAGES += \
+    lge-telephony-extras \
+    lge-telephony-extras.xml \
+    libprocessgroup_shim
+
+PRODUCT_COPY_FILES += \
+    hardware/lineage/compat/vndk/v32/arm64/libutils-v32.so:$(TARGET_COPY_OUT_SYSTEM_EXT)/lib64/libutils-v32.so
 
 # Init
 PRODUCT_COPY_FILES += \

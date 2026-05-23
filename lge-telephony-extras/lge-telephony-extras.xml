@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+  SPDX-License-Identifier: Apache-2.0
+
+  Exposes lge-telephony-extras as a system-shared Java library so callers
+  not on the bootclasspath can still link against it via <uses-library>.
+  Currently no apps in our blob set actually need this XML (Ims6 picks
+  the classes up from PRODUCT_SYSTEM_EXT_BOOT_JARS), but shipping it now
+  keeps future RCS / phone-app additions ready.
+-->
+<permissions>
+    <library name="lge-telephony-extras"
+             file="/system_ext/framework/lge-telephony-extras.jar"/>
+</permissions>
