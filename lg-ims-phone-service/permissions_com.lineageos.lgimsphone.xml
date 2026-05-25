@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+SPDX-License-Identifier: Apache-2.0
+
+Privileged-permissions whitelist for LGImsPhoneService.
+
+Why each permission:
+  CONNECTIVITY_INTERNAL          — needed to look up restricted IMS networks
+                                   inside ConnectivityManager.getAllNetworks()
+  CONNECTIVITY_USE_RESTRICTED_NETWORKS — IMS network is restricted; without this
+                                   getNetworkCapabilities() returns null and we
+                                   can never identify which network is IMS
+  NETWORK_SETTINGS               — some AOSP versions gate restricted-network
+                                   read access on this permission; safe to keep
+  READ_PHONE_STATE               — to obtain SubscriptionManager active subs
+                                   when mapping subId <-> slotId
+-->
+<permissions>
+    <privapp-permissions package="com.lineageos.lgimsphone">
+        <permission name="android.permission.CONNECTIVITY_INTERNAL"/>
+        <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"/>
+        <permission name="android.permission.NETWORK_SETTINGS"/>
+        <permission name="android.permission.READ_PHONE_STATE"/>
+    </privapp-permissions>
+</permissions>

@@ -1,0 +1,31 @@
+// SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+// SPDX-License-Identifier: Apache-2.0
+
+android_app {
+    name: "LGImsPhoneService",
+    system_ext_specific: true,
+    privileged: true,
+    platform_apis: true,
+    certificate: "platform",
+    srcs: ["src/**/*.java"],
+    manifest: "AndroidManifest.xml",
+    libs: [
+        "framework",
+        "telephony-common",
+        "lge-telephony-extras",
+    ],
+    uses_libs: [
+        "lge-telephony-extras",
+    ],
+    required: [
+        "privapp_whitelist_com.lineageos.lgimsphone",
+    ],
+}
+
+prebuilt_etc {
+    name: "privapp_whitelist_com.lineageos.lgimsphone",
+    system_ext_specific: true,
+    sub_dir: "permissions",
+    src: "permissions_com.lineageos.lgimsphone.xml",
+    filename_from_src: true,
+}

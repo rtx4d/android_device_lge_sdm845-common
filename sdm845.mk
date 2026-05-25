@@ -179,10 +179,13 @@ PRODUCT_PACKAGES += \
 # Hotword Enrollement
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/configs/permissions/product_privapp-permissions-hotword.xml:$(TARGET_COPY_OUT_PRODUCT)/etc/permissions/privapp-permissions-hotword.xml
+
 # IMS
 PRODUCT_PACKAGES += \
     lge-telephony-extras \
     lge-telephony-extras.xml \
+    vss_ims_kicker \
+    ImsNetworkRequester \
     libprocessgroup_shim
 
 PRODUCT_COPY_FILES += \

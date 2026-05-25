@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+SPDX-License-Identifier: Apache-2.0
+
+LGImsPhoneService — system app that registers the binder
+"com.lge.ims.phone" (ILGImsPhoneService) so that Ims6's
+ImsPhoneProxyManager can bind to it and obtain ILGImsPhoneProxy /
+ILGImsIsim / ILGImsVoNR per slot. On stock LG firmware the same
+binder is published from inside the Phone process via
+LGImsPhoneService.create() called by PhoneFactory; LineageOS does
+not import that LG framework class, so without this app
+ImsPhoneProxyManager.bindService() returns null and Ims6 cannot
+read P-CSCF addresses for AoSPCSCF::IsConfigured.
+
+Only getPcscfAddress is meaningfully implemented; the rest of the
+ILGImsPhoneProxy AIDL surface (cell-info reporting, modem-info
+caches, FDN, network-feature change broadcasts) is no-op since
+those features are unrelated to the VoLTE registration path.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="com.lineageos.lgimsphone"
+          android:versionCode="1"
+          android:versionName="1.0"
+          android:sharedUserId="android.uid.system">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
+    <uses-permission android:name="android.permission.NETWORK_SETTINGS" />
+    <uses-permission android:name="android.permission.BROADCAST_PACKAGE_REMOVED" />
+
+    <application android:label="LGImsPhoneService"
+                 android:directBootAware="true"
+                 android:persistent="true"
+                 android:enabled="true">
+
+        <uses-library android:name="lge-telephony-extras" android:required="true" />
+
+        <service android:name=".LGImsPhoneServiceImpl"
+                 android:exported="false"
+                 android:directBootAware="true" />
+
+        <receiver android:name=".BootReceiver"
+                  android:exported="true"
+                  android:directBootAware="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

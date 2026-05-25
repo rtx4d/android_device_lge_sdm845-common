@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+SPDX-License-Identifier: Apache-2.0
+
+Privileged-permissions whitelist for ImsNetworkRequester. This is a
+system-uid signature app that needs:
+  CONNECTIVITY_INTERNAL          — to issue network requests on behalf of system
+  CONNECTIVITY_USE_RESTRICTED_NETWORKS — IMS network is restricted (no NOT_RESTRICTED)
+  NETWORK_SETTINGS               — Some AOSP versions gate IMS NetworkRequest
+                                    on this; safe to keep.
+-->
+<permissions>
+    <privapp-permissions package="com.lineageos.imsnetworkrequester">
+        <permission name="android.permission.CONNECTIVITY_INTERNAL"/>
+        <permission name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS"/>
+        <permission name="android.permission.NETWORK_SETTINGS"/>
+        <permission name="android.permission.READ_PHONE_STATE"/>
+    </privapp-permissions>
+</permissions>

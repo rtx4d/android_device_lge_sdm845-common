@@ -47,6 +47,30 @@ vendor/lib64/libaudioparsers.so
 vendor/lib64/libcsd-client.so
 vendor/lib64/libqtigef.so
 
+# del from caymanslm
+vendor/lib64/libMcClient.so
+
+# ATD
+vendor/bin/atd
+vendor/bin/frstd
+vendor/etc/init/init.lge.atd.rc
+vendor/lib/libatd_common.so
+vendor/lib/libatd_corelib.so
+vendor/lib/libatd_modeminterface.so
+vendor/lib/liboemcrypto.so
+vendor/lib/libwvoemprov.so
+vendor/lib/libpatchcodeid.so
+vendor/lib/libLgeProductFeatures2.so;MODULE_SUFFIX=_vendor
+vendor/lib/libvss_dmi_qcci.so
+vendor/lib/libDxHdcp.so
+vendor/lib/libTBaseProvisioningAT.so
+vendor/lib/libfrst.so
+vendor/lib/libMcClient.so
+vendor/bin/hw/vendor.lge.hardware.lgatcmd@1.0-service
+vendor/etc/init/vendor.lge.hardware.lgatcmd@1.0-service.rc
+vendor/lib/hw/vendor.lge.hardware.lgatcmd@1.0-impl.so
+vendor/lib/vendor.lge.hardware.lgatcmd@1.0.so
+
 # Bluetooth
 vendor/bin/hw/android.hardware.bluetooth@1.0-service-qti
 vendor/etc/init/android.hardware.bluetooth@1.0-service-qti.rc
@@ -707,11 +731,16 @@ system_ext/lib64/vendor.qti.ims.rcsconfig@1.0.so
 system_ext/lib64/vendor.qti.ims.rcsconfig@1.1.so
 system_ext/lib64/vendor.qti.ims.rcsconfig@2.0.so
 system_ext/lib64/vendor.qti.ims.rcsconfig@2.1.so
+system_ext/lib64/vendor.qti.ims.rcssip@1.0.so
+system_ext/lib64/vendor.qti.ims.rcsuce@1.0.so
 system_ext/lib64/vendor.qti.imsrtpservice@3.0.so
 system_ext/etc/permissions/com.qualcomm.qti.imscmservice.xml
 system_ext/etc/permissions/com.qualcomm.qti.imscmservice-V2.0-java.xml
 system_ext/etc/permissions/com.qualcomm.qti.imscmservice-V2.1-java.xml
 system_ext/etc/permissions/com.qualcomm.qti.imscmservice-V2.2-java.xml
+system_ext/framework/com.qualcomm.qti.imscmservice-V2.0-java.jar
+system_ext/framework/com.qualcomm.qti.imscmservice-V2.1-java.jar
+system_ext/framework/com.qualcomm.qti.imscmservice-V2.2-java.jar
 system_ext/framework/vendor.qti.ims.callcapability-V1.0-java.jar
 system_ext/framework/vendor.qti.ims.callinfo-V1.0-java.jar
 system_ext/framework/vendor.qti.ims.configservice-V1.0-java.jar
@@ -781,20 +810,27 @@ system_ext/bin/imsipsecstarter
 system_ext/etc/init/init.lge.ims.rc
 system_ext/etc/permissions/com.lge.ims.httpTxn.xml
 system_ext/etc/permissions/com.lge.server.ims.sms.scbm.xml
+system_ext/etc/permissions/lgdataservice-manager.xml
+system_ext/etc/permissions/lgdataservice_whitelist.xml
 system_ext/framework/com.lge.ims.httpTxn.jar
+system_ext/framework/lgdataservice-manager.jar
+system_ext/framework/vendor.lge.hardware.soi-V1.0-java.jar
+system_ext/lib64/libLgeProductFeatures2.so
 system_ext/lib64/libims.lge.so
 system_ext/lib64/libimscamerajni.lge.so
 system_ext/lib64/libimsmmpf.lge.so
 system_ext/lib64/libimswms.lge.so
-
 system_ext/lib64/vendor.lge.hardware.soi@1.0.so
-system_ext/lib64/vendor.qti.ims.rcsuce@1.0.so
-system_ext/lib64/vendor.qti.ims.rcssip@1.0.so
-system_ext/lib64/libLgeProductFeatures2.so
-
 system_ext/lib64/vendor.lge.hardware.vss_ims@1.0.so
+vendor/bin/hw/vendor.lge.hardware.soi@1.0-service
+vendor/etc/init/vendor.lge.hardware.soi@1.0-service.rc
+vendor/lib64/hw/vendor.lge.hardware.soi@1.0-impl.so
+vendor/lib64/liblgesoi-impl.so
+vendor/lib64/vendor.lge.hardware.soi@1.0.so;MODULE_SUFFIX=_vendor
+vendor/lib64/libqmi_wms_client_helper.so
 system_ext/priv-app/Ims6/Ims6.apk
 system_ext/priv-app/ImsVT/ImsVT.apk
+system_ext/priv-app/lgdataservice/lgdataservice.apk
 system_ext/media/ims/audio/dtmf/dtmf0.pcm
 system_ext/media/ims/audio/dtmf/dtmf1.pcm
 system_ext/media/ims/audio/dtmf/dtmf2.pcm
@@ -847,7 +883,8 @@ vendor/bin/hw/vendor.lge.hardware.vss_ims@1.0-service
 vendor/etc/init/vendor.lge.hardware.vss_ims@1.0-service.rc
 vendor/lib64/hw/vendor.lge.hardware.vss_ims@1.0-impl.so
 vendor/lib64/libvssims-impl.so
-vendor/lib64/vendor.lge.hardware.vss_ims@1.0.so;MODULE_SUFFIX=_vendor
+# vendor/lib64/vendor.lge.hardware.vss_ims@1.0.so  -- removed; regenerated from
+# device/lge/sdm845-common/interfaces/vendor/lge/hardware/vss_ims/1.0/*.hal
 
 # Sensors
 vendor/etc/init/init.vendor.sensors.rc

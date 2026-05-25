@@ -1,0 +1,1 @@
+/(vendor|system/vendor)/bin/hw/lge_radio_kicker   u:object_r:lge_radio_kicker_exec:s0

@@ -1,0 +1,28 @@
+# SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+# SPDX-License-Identifier: Apache-2.0
+#
+# lge_radio_kicker needs to:
+#  - look up ILgeRadio/lge_radio via hwservicemanager
+#  - hold an hwbinder handle to qcrild's ILgeRadio service and transact on it
+#
+# qcrild on caymanslm runs in domain rild. There is no dedicated SELinux type
+# for the LGE-extended ILgeRadio service yet, so we allow direct binder_call
+# to rild.
+
+type lge_radio_kicker, domain;
+type lge_radio_kicker_exec, exec_type, vendor_file_type, file_type;
+
+init_daemon_domain(lge_radio_kicker)
+
+# hwservicemanager lookup
+hwbinder_use(lge_radio_kicker)
+get_prop(lge_radio_kicker, hwservicemanager_prop)
+allow lge_radio_kicker hwservicemanager:binder { call transfer };
+allow lge_radio_kicker hidl_manager_hwservice:hwservice_manager { find };
+
+# Talk directly to qcrild's ILgeRadio HIDL service
+binder_call(lge_radio_kicker, rild)
+allow lge_radio_kicker rild:binder { call transfer };
+
+# Logging
+allow lge_radio_kicker self:capability { net_bind_service };

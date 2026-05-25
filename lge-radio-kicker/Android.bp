@@ -1,0 +1,28 @@
+// SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "lge_radio_kicker",
+    vendor: true,
+    relative_install_path: "hw",
+    init_rc: ["lge_radio_kicker.rc"],
+
+    srcs: ["lge_radio_kicker.cpp"],
+
+    shared_libs: [
+        "libbase",
+        "libhidlbase",
+        "liblog",
+        "libutils",
+        // Existing hidl_interface in hardware/lge/interfaces; provides
+        // ILgeRadio.h headers and the runtime proxy stub. Already linked
+        // by android.hardware.radio@1.4-service.lge as the precedent.
+        "vendor.lge.hardware.radio@2.0",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-unused-parameter",
+    ],
+}

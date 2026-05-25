@@ -1,0 +1,23 @@
+// SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+// SPDX-License-Identifier: Apache-2.0
+
+android_app {
+    name: "ImsNetworkRequester",
+    system_ext_specific: true,
+    privileged: true,
+    platform_apis: true,
+    certificate: "platform",
+    srcs: ["src/**/*.java"],
+    manifest: "AndroidManifest.xml",
+    required: [
+        "privapp_whitelist_com.lineageos.imsnetworkrequester",
+    ],
+}
+
+prebuilt_etc {
+    name: "privapp_whitelist_com.lineageos.imsnetworkrequester",
+    system_ext_specific: true,
+    sub_dir: "permissions",
+    src: "permissions_com.lineageos.imsnetworkrequester.xml",
+    filename_from_src: true,
+}

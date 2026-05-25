@@ -1,0 +1,1 @@
+/(vendor|system/vendor)/bin/hw/vss_ims_kicker   u:object_r:vss_ims_kicker_exec:s0

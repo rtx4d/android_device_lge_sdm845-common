@@ -47,7 +47,6 @@ lib_fixups: lib_fixups_user_type = {
         'com.qualcomm.qti.imscmservice@2.0.so',
         'com.qualcomm.qti.imscmservice@2.1.so',
         'com.qualcomm.qti.imscmservice@2.2.so',
-        'vendor.lge.hardware.vss_ims@1.0.so;',
         'vendor.qti.hardware.radio.ims@1.0.so',
         'vendor.qti.hardware.radio.ims@1.1.so',
         'vendor.qti.hardware.radio.ims@1.2.so',
@@ -59,7 +58,9 @@ lib_fixups: lib_fixups_user_type = {
         'vendor.qti.ims.callcapability@1.0.so',
         'vendor.qti.ims.callinfo@1.0.so',
         'vendor.qti.ims.factory@1.0.so',
-        'vendor.qti.ims.factory@1.1.so'
+        'vendor.qti.ims.factory@1.1.so',
+        'vendor.lge.hardware.soi@1.0.so',
+        'libLgeProductFeatures2.so'
     ): lib_fixup_vendor_suffix
 }
 
@@ -73,6 +74,8 @@ blob_fixups: blob_fixups_user_type = {
         .add_needed('libui_shim.so'),
     'system_ext/lib64/libims.lge.so': blob_fixup()
         .replace_needed('libutils.so', 'libutils-v32.so'),
+    ('vendor/bin/atd', 'vendor/lib/libatd_common.so') : blob_fixup()
+        .replace_needed('libLgeProductFeatures2.so', 'libLgeProductFeatures2_vendor.so'),
 }  # fmt: skip
 
 module = ExtractUtilsModule(

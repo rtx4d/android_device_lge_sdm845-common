@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+SPDX-License-Identifier: Apache-2.0
+
+ImsNetworkRequester — minimal system app that issues an active
+ConnectivityManager.requestNetwork() for NET_CAPABILITY_IMS on every active
+subscription at boot. This forces DataNetworkController to bring up the
+hidden Beeline ims APN (or any apn=ims entry in apns-conf.xml) which then
+provides P-CSCF in PCO and unblocks the rest of the LG IMS stack.
+
+Stock LG firmware fires this request from
+com.lge.lgdataphone.dataconnection.ApnManager — a class in the LG-specific
+framework jar that LineageOS does not import. This tiny service replaces
+that single call, nothing more.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="com.lineageos.imsnetworkrequester"
+          android:versionCode="1"
+          android:versionName="1.0"
+          android:sharedUserId="android.uid.system">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- CONNECTIVITY_INTERNAL is required to request restricted IMS network.
+         We get it for free as a system-uid signature app. -->
+    <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL" />
+    <uses-permission android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
+    <uses-permission android:name="android.permission.NETWORK_SETTINGS" />
+
+    <application android:label="ImsNetworkRequester"
+                 android:directBootAware="true"
+                 android:persistent="true"
+                 android:enabled="true">
+
+        <service android:name=".ImsNetworkRequesterService"
+                 android:exported="false"
+                 android:directBootAware="true" />
+
+        <receiver android:name=".BootReceiver"
+                  android:exported="true"
+                  android:directBootAware="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>

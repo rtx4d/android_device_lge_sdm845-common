@@ -579,4 +579,13 @@
             <instance>default</instance>
         </interface>
     </hal>
+    <hal format="hidl">
+        <name>vendor.lge.hardware.lgatcmd</name>
+        <transport>hwbinder</transport>
+        <version>1.0</version>
+        <interface>
+            <name>ILgAtCmd</name>
+            <instance>default</instance>
+        </interface>
+    </hal>
 </manifest>

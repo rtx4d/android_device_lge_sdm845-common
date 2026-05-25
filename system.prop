@@ -35,6 +35,15 @@ dalvik.vm.dex2oat64.enabled=true
 # Fastbootd
 ro.fastbootd.available=true
 
+# IMS
+persist.product.lge.ims.volte_open=1
+persist.product.lge.supportvolte=1
+persist.product.lge.radio.gpri.volte=true
+ro.vendor.lge.feature.ims=true
+product.lge.ims.reg=1
+product.lge.ims.msim_slotid=0
+persist.vendor.lge.ims.dualvolte=1
+
 # Media
 media.settings.xml=/vendor/etc/media_profiles_vendor.xml
 
