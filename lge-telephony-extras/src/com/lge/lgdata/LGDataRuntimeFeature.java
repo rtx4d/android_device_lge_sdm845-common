@@ -394,10 +394,40 @@ public enum LGDataRuntimeFeature implements Parcelable {
 
     @Override public int describeContents() { return 0; }
 
-    /** Stock delegates to LGDataRuntimeFeatureManager; on this build all
-     *  runtime features stay off — matches stock default behaviour. */
-    public boolean isEnabled() { return false; }
-    public boolean isEnabled(int slot) { return false; }
+    /**
+     * Stock delegates to LGDataRuntimeFeatureManager which is a 368-line
+     * SystemProperties / DB-backed feature flag store. We don't have that
+     * store, so most features stay off — matches stock default for
+     * features that aren't operator-specific.
+     *
+     * EXCEPTION: a small whitelist of features must report `true` for
+     * the LG IMS data-connection path to function:
+     *
+     *  - LGP_DATA_DATACONNECTION_QOS_NOTIFY — gates LgDataFeatureImpl
+     *    .onQosEvent() from emitting the broadcast Intent
+     *    com.lge.internal.telephony.qos-changed. Without it, Ims6's
+     *    QoSPreconditionManager never receives QCI/QID and outgoing
+     *    INVITE SDP carries no precondition. Result: server returns
+     *    580 Precondition Failure 16s after PRACK 200 OK.
+     *  - LGP_DATA_IMS_SUPPORT_LG_IMS — generic gate that other LG
+     *    data classes consult to know whether IMS path is active.
+     *
+     * Verified by call trace 2026-05-25 18:01: lgdataservice did
+     * receive `LgDataCallback.dataQosChangedInd` from the HAL and
+     * dispatched message what=0x2c89 to LgDataFeatureImpl, but
+     * `onQosEvent` returned early at the runtime-feature gate before
+     * sending the broadcast.
+     */
+    public boolean isEnabled() {
+        switch (this) {
+            case LGP_DATA_DATACONNECTION_QOS_NOTIFY:
+            case LGP_DATA_IMS_SUPPORT_LG_IMS:
+                return true;
+            default:
+                return false;
+        }
+    }
+    public boolean isEnabled(int slot) { return isEnabled(); }
 
     /** Stock setters write into the FeatureManager store; we have no
      *  store, so silently drop. Callers don't read the value back. */
