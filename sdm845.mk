@@ -186,6 +186,7 @@ PRODUCT_PACKAGES += \
     lge-telephony-extras.xml \
     vss_ims_kicker \
     ImsNetworkRequester \
+    LGImsPhoneService \
     libprocessgroup_shim
 
 PRODUCT_COPY_FILES += \
