@@ -1,0 +1,2 @@
+/system/system_ext/bin/mmpf_kicker   u:object_r:mmpf_kicker_exec:s0
+/system_ext/bin/mmpf_kicker          u:object_r:mmpf_kicker_exec:s0

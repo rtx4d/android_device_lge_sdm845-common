@@ -1,0 +1,17 @@
+# SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+# SPDX-License-Identifier: Apache-2.0
+#
+# mmpf_kicker publishes the legacy binder `lgeims_mmpf` that
+# libimsmmpf.lge.so::getMMPFService() blocks on. Stock LG triggered
+# this from a hook inside system_server's startup; we run a small
+# standalone daemon instead.
+#
+# Run after class main is up (servicemanager has to be ready for
+# addService to work). Stay alive forever — exit would tear down the
+# BBinder.
+
+service vendor.mmpf_kicker /system/system_ext/bin/mmpf_kicker
+    class main
+    user system
+    group system radio inet net_admin net_raw
+    seclabel u:r:mmpf_kicker:s0

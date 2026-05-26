@@ -1,0 +1,41 @@
+# SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+# SPDX-License-Identifier: Apache-2.0
+#
+# Domain for /system/system_ext/bin/mmpf_kicker. The daemon's only job
+# is to dlopen libimsmmpf.lge.so and call android::MMPFService::instantiate(),
+# which publishes the legacy binder service `lgeims_mmpf` in the system
+# service manager. After that it joinThreadPool()s and stays parked.
+#
+# What we need to allow:
+#   1. binder_use   — talk to /dev/binder (servicemanager and clients)
+#   2. binder_service — be the server side for incoming transacts
+#   3. add_service(self, ims_service) — actually publish lgeims_mmpf
+#   4. dlopen + execute libimsmmpf.lge.so (system_ext lib already in
+#      system_ext_file context, and /system/system_ext/bin/mmpf_kicker
+#      is system_ext_file by default — should "just work")
+
+type mmpf_kicker, domain;
+type mmpf_kicker_exec, system_file_type, exec_type, file_type;
+
+init_daemon_domain(mmpf_kicker)
+
+# Standard binder server-side
+binder_use(mmpf_kicker)
+binder_service(mmpf_kicker)
+
+# Publish lgeims_mmpf — context "ims_service" per system_ext_service_contexts
+allow mmpf_kicker ims_service:service_manager add;
+
+# MMPF inside libimsmmpf.lge.so spawns its own session worker threads
+# (visible from MMPFService::System::SystemClient symbol family). The
+# library uses pthreads + posix mutexes only, no ipc/shm — but we need
+# proc read for libbinder's BPF lookups.
+allow mmpf_kicker proc:file r_file_perms;
+
+# MMPF::Client::OnNotify uses cutils properties to gate verbose logging
+# (KEY_DEBUG_MMPF_AP_LOG / KEY_DEBUG_MMPF_CP_LOG come from system_prop).
+get_prop(mmpf_kicker, debug_prop)
+get_prop(mmpf_kicker, system_prop)
+
+# Bookkeeping that any well-behaved daemon does at startup
+allow mmpf_kicker self:capability { net_bind_service };

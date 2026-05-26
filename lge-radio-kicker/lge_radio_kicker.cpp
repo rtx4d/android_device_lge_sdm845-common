@@ -38,10 +38,10 @@ using ::vendor::lge::hardware::radio::V2_0::ILgeRadio;
 
 namespace {
 
-bool kickOnce() {
-    sp<ILgeRadio> radio = ILgeRadio::getService("lge_radio");
+bool kickOnce(const char* instance) {
+    sp<ILgeRadio> radio = ILgeRadio::getService(instance);
     if (radio == nullptr) {
-        LOG(WARNING) << "ILgeRadio/lge_radio not yet available";
+        LOG(WARNING) << "ILgeRadio/" << instance << " not yet available";
         return false;
     }
 
@@ -51,13 +51,27 @@ bool kickOnce() {
     // throttling in qcrild's data plane.
     Return<void> ret = radio->reportPdnThrottleInd(0, false);
     if (!ret.isOk()) {
-        LOG(ERROR) << "reportPdnThrottleInd transaction failed: " << ret.description();
+        LOG(ERROR) << "reportPdnThrottleInd transaction failed on "
+                   << instance << ": " << ret.description();
         return false;
     }
 
-    LOG(INFO) << "reportPdnThrottleInd(serial=0, enable=false) delivered to lge_radio";
+    LOG(INFO) << "reportPdnThrottleInd(serial=0, enable=false) delivered to "
+              << instance;
     return true;
 }
+
+// In DSDS each qcrild instance publishes its own ILgeRadio:
+//   - "lge_radio"  is served by qcrild  (slot 0)
+//   - "lge_radio2" is served by qcrild2 (slot 1)
+// Stock LG framework calls reportPdnThrottleInd on every active phone. We
+// must do the same — without it slot 1 caches SERVICE_OPTION_NOT_SUBSCRIBED
+// from the modem and short-circuits every IMS SETUP_DATA_CALL with
+// PDN_IPV4_CALL_THROTTLED (0x7f2). Symptom: IMS+VoLTE works on slot 0 but
+// never on slot 1. Verified 2026-05-27 via lshal:
+//   vendor.lge.hardware.radio@2.0::ILgeRadio/lge_radio   served by qcrild
+//   vendor.lge.hardware.radio@2.0::ILgeRadio/lge_radio2  served by qcrild2
+constexpr const char* kInstances[] = { "lge_radio", "lge_radio2" };
 
 }  // namespace
 
@@ -66,16 +80,30 @@ int main() {
 
     // qcrild registers ILgeRadio/lge_radio early in its init (see
     // RILC_EX: LgeRadio[2.0]::registerAsService(lge_radio) in radio logs).
-    // The service is normally up well before us, but on cold boot we still
-    // race with hwservicemanager populating the entry. Retry up to 60 times
-    // (~2 minutes) with 2s spacing.
+    // qcrild2 registers ILgeRadio/lge_radio2 later, since it boots a few
+    // seconds after qcrild. Track success per instance so retries don't
+    // re-kick a slot we've already done.
+    bool done[2] = { false, false };
     for (int i = 0; i < 60; ++i) {
-        if (kickOnce()) {
+        bool all_done = true;
+        for (size_t j = 0; j < 2; ++j) {
+            if (done[j]) continue;
+            if (kickOnce(kInstances[j])) {
+                done[j] = true;
+            } else {
+                all_done = false;
+            }
+        }
+        if (all_done) {
             return 0;
         }
         std::this_thread::sleep_for(2s);
     }
 
-    LOG(ERROR) << "Gave up waiting for ILgeRadio/lge_radio";
-    return 1;
+    if (!done[0] || !done[1]) {
+        LOG(ERROR) << "Gave up waiting for ILgeRadio (lge_radio="
+                   << done[0] << ", lge_radio2=" << done[1] << ")";
+        return 1;
+    }
+    return 0;
 }

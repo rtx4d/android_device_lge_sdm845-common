@@ -31,6 +31,10 @@ that single call, nothing more.
     <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL" />
     <uses-permission android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />
     <uses-permission android:name="android.permission.NETWORK_SETTINGS" />
+    <!-- Insert apn=ims rows into telephony.db when a SIM whose carrier has
+         no IMS APN row is loaded. Works around an AOSP DataProfileManager
+         race that breaks IMS on the second slot in DSDS. -->
+    <uses-permission android:name="android.permission.WRITE_APN_SETTINGS" />
 
     <application android:label="ImsNetworkRequester"
                  android:directBootAware="true"

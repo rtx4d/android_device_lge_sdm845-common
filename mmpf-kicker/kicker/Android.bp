@@ -1,0 +1,25 @@
+// SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+// SPDX-License-Identifier: Apache-2.0
+
+cc_binary {
+    name: "mmpf_kicker",
+    system_ext_specific: true,
+    init_rc: ["mmpf_kicker.rc"],
+
+    srcs: ["mmpf_kicker.cpp"],
+
+    shared_libs: [
+        "libbase",
+        "libbinder",
+        "libcutils",
+        "libdl",
+        "liblog",
+        "libutils",
+    ],
+
+    cflags: [
+        "-Wall",
+        "-Werror",
+        "-Wno-unused-parameter",
+    ],
+}
