@@ -41,6 +41,19 @@ Stock equivalents we replace:
     <uses-permission android:name="android.permission.BROADCAST_STICKY" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
 
+    <!--
+    Declare our two LG broadcasts as protected so AOSP's
+    BroadcastController.checkBroadcastFromSystem does not log a wtf
+    every time we sendStickyBroadcast. The action strings are exactly
+    the ones Ims6.app.StateInfoChangedReceiver subscribes to. Only
+    apps with sharedUserId=android.uid.system + platform certificate
+    can register protected-broadcast actions; we satisfy both.
+    Stock LG does the same declaration in framework.jar's manifest.
+    -->
+    <protected-broadcast android:name="com.lge.action.VOLTE_CHANGED_INFO" />
+    <protected-broadcast android:name="com.lge.action.RCS_CHANGED_INFO" />
+    <protected-broadcast android:name="com.lge.action.ACTION_VO_CONFIG_UPDATE" />
+
     <application android:label="@string/app_name"
                  android:directBootAware="true"
                  android:persistent="true"
@@ -67,6 +80,22 @@ Stock equivalents we replace:
             <intent-filter android:priority="999">
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+
+        <!--
+        Compatibility receiver: stock LG HiddenMenu's "Activate Vo Service"
+        applies changes by writing /data/shared/cust/config/vo_config.xml then
+        firing this sticky broadcast (with extra Sender="enabler"). Stock
+        firmware processes this in framework.jar's ImsRadioConfigManager;
+        LineageOS doesn't import that class, so we receive it ourselves and
+        forward to the service for XML import + sync.
+        -->
+        <receiver android:name=".VoConfigUpdateReceiver"
+                  android:exported="true"
+                  android:directBootAware="true">
+            <intent-filter>
+                <action android:name="com.lge.action.ACTION_VO_CONFIG_UPDATE" />
             </intent-filter>
         </receiver>
     </application>

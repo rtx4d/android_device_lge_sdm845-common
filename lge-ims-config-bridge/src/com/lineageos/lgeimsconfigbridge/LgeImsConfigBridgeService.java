@@ -46,9 +46,17 @@ import android.telephony.TelephonyManager;
 import android.text.TextUtils;
 import android.util.Log;
 
+import org.xmlpull.v1.XmlPullParser;
+import org.xmlpull.v1.XmlPullParserFactory;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileReader;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
@@ -196,7 +204,14 @@ public class LgeImsConfigBridgeService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        Log.i(TAG, "Service onStartCommand");
+        String action = intent != null ? intent.getAction() : null;
+        Log.i(TAG, "Service onStartCommand action=" + action);
+        // VoConfigUpdateReceiver forwards stock HiddenMenu's broadcast here.
+        // Re-import the XML before the regular sync so any per-SIM choice
+        // the user made via HiddenMenu lands in our SharedPreferences.
+        if (VoConfigUpdateReceiver.ACTION_VO_CONFIG_UPDATE.equals(action)) {
+            importVoConfigXml();
+        }
         syncAllSlots();
         return START_STICKY;
     }
@@ -369,6 +384,208 @@ public class LgeImsConfigBridgeService extends Service {
     }
 
     private static String bs(boolean v) { return v ? "1" : "0"; }
+
+    // ---------- vo_config.xml import (HiddenMenu compatibility) ----------
+    //
+    // Stock LG HiddenMenu's "Activate Vo Service" applies its choices by
+    // writing /data/shared/cust/config/vo_config.xml then sending sticky
+    // ACTION_VO_CONFIG_UPDATE. Stock framework ImsRadioConfigManager re-parses
+    // the XML to write per-slot sysprops. LineageOS lacks IRCM, so we do it
+    // ourselves here: parse the XML, match each active SIM to the best
+    // <info> entry, and persist the resulting VoConfig as a per-ICCID
+    // override. The next syncAllSlots() picks them up via resolveConfig().
+
+    private static final String VO_CONFIG_PATH = "/data/shared/cust/config/vo_config.xml";
+
+    private static final class XmlEntry {
+        String mcc = "", mnc = "", gid = "", spn = "", imsi = "";
+        VoConfig cfg = new VoConfig();
+    }
+
+    /**
+     * Re-parse /data/shared/cust/config/vo_config.xml (stock HiddenMenu
+     * format) and persist per-ICCID overrides for every active SIM that
+     * matches an entry. Caller should follow up with syncAllSlots().
+     *
+     * Unlike stock VoConfigParser.getVoConfInfoList we do NOT enforce
+     * ro.vendor.lge.build.target_operator/country match — that guard is
+     * defensive on stock for ROM/XML mismatch detection, not gating logic.
+     * On LineageOS we trust whatever the user writes.
+     */
+    private synchronized void importVoConfigXml() {
+        File f = new File(VO_CONFIG_PATH);
+        if (!f.exists()) {
+            Log.i(TAG, "importVoConfigXml: " + VO_CONFIG_PATH + " not present, nothing to import");
+            return;
+        }
+        List<XmlEntry> entries;
+        try {
+            entries = parseVoConfig(f);
+        } catch (Exception e) {
+            Log.e(TAG, "importVoConfigXml: parse failed: " + e.getMessage());
+            return;
+        }
+        Log.i(TAG, "importVoConfigXml: " + entries.size() + " entries parsed");
+
+        if (mSm == null) return;
+        List<SubscriptionInfo> subs;
+        try {
+            subs = mSm.getActiveSubscriptionInfoList();
+        } catch (SecurityException e) {
+            Log.e(TAG, "importVoConfigXml: cannot read subs: " + e.getMessage());
+            return;
+        }
+        if (subs == null) return;
+
+        SharedPreferences.Editor edit = mPrefs.edit();
+        for (SubscriptionInfo info : subs) {
+            String iccid = nullToEmpty(info.getIccId());
+            if (TextUtils.isEmpty(iccid)) continue;
+
+            String mcc = nullToEmpty(info.getMccString());
+            String mnc = nullToEmpty(info.getMncString());
+            String spn = "", imsi = "", gid = "";
+            if (mTm != null) {
+                try {
+                    TelephonyManager perSub =
+                            mTm.createForSubscriptionId(info.getSubscriptionId());
+                    if (perSub != null) {
+                        spn  = nullToEmpty(perSub.getSimOperatorName());
+                        imsi = nullToEmpty(perSub.getSubscriberId());
+                        gid  = nullToEmpty(perSub.getGroupIdLevel1());
+                    }
+                } catch (SecurityException ignored) { }
+            }
+
+            XmlEntry best = findBestMatch(entries, mcc, mnc, gid, spn, imsi);
+            if (best == null) {
+                Log.i(TAG, "importVoConfigXml: " + redact(iccid)
+                        + " (mcc=" + mcc + " mnc=" + mnc
+                        + ") — no XML entry, leaving prefs untouched");
+                continue;
+            }
+            edit.putInt(PREF_KEY_PREFIX + iccid, best.cfg.toBits());
+            Log.i(TAG, "importVoConfigXml: " + redact(iccid) + " -> " + best.cfg
+                    + " (matched mcc=" + best.mcc + " mnc=" + best.mnc
+                    + " gid=" + best.gid + " spn=" + best.spn
+                    + " imsi=" + redact(best.imsi) + ")");
+        }
+        edit.apply();
+    }
+
+    /**
+     * Parse vo_config.xml. Tolerates the two formats we know:
+     *   New: <profiles><profile op=.. country=..><info ...><prop .../></info></profile></profiles>
+     *   Old: <profiles><volte><info .../></volte><vowifi>... </vowifi></profiles>
+     * We only consume the <info>+<prop> pairs and don't care which parent
+     * tag they live under — sufficient for HiddenMenu output.
+     */
+    private static List<XmlEntry> parseVoConfig(File f) throws Exception {
+        List<XmlEntry> list = new ArrayList<>();
+        BufferedReader r = null;
+        try {
+            r = new BufferedReader(new FileReader(f));
+            XmlPullParser p = XmlPullParserFactory.newInstance().newPullParser();
+            p.setInput(r);
+            XmlEntry curr = null;
+            int ev = p.getEventType();
+            while (ev != XmlPullParser.END_DOCUMENT) {
+                if (ev == XmlPullParser.START_TAG) {
+                    String name = p.getName();
+                    if ("info".equals(name)) {
+                        curr = new XmlEntry();
+                        curr.mcc  = nullToEmpty(p.getAttributeValue(null, "mcc"));
+                        curr.mnc  = nullToEmpty(p.getAttributeValue(null, "mnc"));
+                        curr.gid  = nullToEmpty(p.getAttributeValue(null, "gid"));
+                        curr.spn  = nullToEmpty(p.getAttributeValue(null, "spn"));
+                        curr.imsi = nullToEmpty(p.getAttributeValue(null, "imsi"));
+                    } else if ("prop".equals(name) && curr != null) {
+                        curr.cfg.volte  = "1".equals(p.getAttributeValue(null, "support_volte"));
+                        curr.cfg.vilte  = "1".equals(p.getAttributeValue(null, "support_vilte"));
+                        curr.cfg.vowifi = "1".equals(p.getAttributeValue(null, "support_vowifi"));
+                        curr.cfg.viwifi = "1".equals(p.getAttributeValue(null, "support_viwifi"));
+                        curr.cfg.rcs    = "1".equals(p.getAttributeValue(null, "support_rcs"));
+                        list.add(curr);
+                    }
+                } else if (ev == XmlPullParser.END_TAG) {
+                    if ("info".equals(p.getName())) curr = null;
+                }
+                ev = p.next();
+            }
+        } finally {
+            if (r != null) try { r.close(); } catch (Exception ignored) {}
+        }
+        return list;
+    }
+
+    /**
+     * Mirror of stock Utils.findBestMatchedSimInfo / VoConfigParser priority
+     * table (8 tiers). Lower tier number = closer match. Returns the
+     * entry with the lowest tier; null if no entry's mcc matches at all.
+     *
+     * Tier 0: mcc + mnc + gid + spn + imsi all match (exact)
+     * Tier 1: mcc + mnc + gid + imsi, spn empty in entry
+     * Tier 2: mcc + mnc + spn + imsi, gid empty in entry
+     * Tier 3: mcc + mnc + imsi, gid + spn empty in entry
+     * Tier 4: mcc + mnc + gid + spn, imsi empty in entry
+     * Tier 5: mcc + mnc + gid, spn + imsi empty in entry
+     * Tier 6: mcc + mnc + spn, gid + imsi empty in entry
+     * Tier 7: mcc + mnc only, gid + spn + imsi all empty in entry
+     * Tier 8: mcc only, all others empty in entry (catch-all per country)
+     */
+    private static XmlEntry findBestMatch(List<XmlEntry> entries,
+            String mcc, String mnc, String gid, String spn, String imsi) {
+        String gidLow = gid != null ? gid.toLowerCase(Locale.ROOT) : "";
+        XmlEntry best = null;
+        int bestTier = Integer.MAX_VALUE;
+        for (XmlEntry e : entries) {
+            if (TextUtils.isEmpty(e.mcc) || !e.mcc.equals(mcc)) continue;
+
+            boolean mncMatch  = !e.mnc.isEmpty() && e.mnc.equals(mnc);
+            boolean gidSet    = !e.gid.isEmpty();
+            boolean spnSet    = !e.spn.isEmpty();
+            boolean imsiSet   = !e.imsi.isEmpty();
+            boolean gidMatch  = gidSet  && gidLow.startsWith(e.gid.toLowerCase(Locale.ROOT));
+            boolean spnMatch  = spnSet  && spn.equals(e.spn);
+            boolean imsiMatch = imsiSet && matchImsi(imsi, e.imsi);
+
+            // Reject entries whose constraints don't match the SIM at all.
+            if (gidSet  && !gidMatch)  continue;
+            if (spnSet  && !spnMatch)  continue;
+            if (imsiSet && !imsiMatch) continue;
+
+            int tier;
+            if (mncMatch && gidSet && spnSet && imsiSet)        tier = 0;
+            else if (mncMatch && gidSet && !spnSet && imsiSet)  tier = 1;
+            else if (mncMatch && !gidSet && spnSet && imsiSet)  tier = 2;
+            else if (mncMatch && !gidSet && !spnSet && imsiSet) tier = 3;
+            else if (mncMatch && gidSet && spnSet && !imsiSet)  tier = 4;
+            else if (mncMatch && gidSet && !spnSet && !imsiSet) tier = 5;
+            else if (mncMatch && !gidSet && spnSet && !imsiSet) tier = 6;
+            else if (mncMatch && !gidSet && !spnSet && !imsiSet) tier = 7;
+            else if (!mncMatch && e.mnc.isEmpty()
+                    && !gidSet && !spnSet && !imsiSet)          tier = 8;
+            else continue;
+
+            if (tier < bestTier) {
+                bestTier = tier;
+                best = e;
+            }
+        }
+        return best;
+    }
+
+    private static boolean matchImsi(String simImsi, String pattern) {
+        // 'x'/'X' wildcards per stock VoConfigParser.
+        if (pattern == null || simImsi == null) return false;
+        if (pattern.length() > simImsi.length()) return false;
+        for (int i = 0; i < pattern.length(); i++) {
+            char p = pattern.charAt(i);
+            if (p == 'x' || p == 'X') continue;
+            if (p != simImsi.charAt(i)) return false;
+        }
+        return true;
+    }
 
     // ---------- helpers ----------
 
