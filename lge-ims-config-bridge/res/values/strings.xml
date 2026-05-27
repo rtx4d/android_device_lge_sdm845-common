@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+SPDX-License-Identifier: Apache-2.0
+-->
+<resources>
+    <string name="app_name">IMS / VoLTE Activator</string>
+    <string name="title_main">IMS / VoLTE per-SIM</string>
+    <string name="hint_no_sims">No SIMs detected. Insert a SIM and reopen.</string>
+    <string name="hint_default">Default = enabled. Toggle off only if a carrier rejects IMS.</string>
+    <string name="slot_label">Slot %1$d — %2$s</string>
+    <string name="iccid_label">ICCID: %1$s</string>
+    <string name="mccmnc_label">MCC/MNC: %1$s</string>
+    <string name="cb_volte">VoLTE (voice over LTE)</string>
+    <string name="cb_vilte">ViLTE (video over LTE)</string>
+    <string name="cb_vowifi">VoWiFi (voice over Wi-Fi)</string>
+    <string name="cb_viwifi">ViWiFi (video over Wi-Fi)</string>
+    <string name="cb_rcs">RCS (rich messaging)</string>
+    <string name="btn_apply">Apply</string>
+    <string name="btn_reset">Reset to defaults</string>
+    <string name="toast_applied">Applied. Reboot if IMS state doesn\'t update.</string>
+    <string name="toast_reset">Reset to defaults.</string>
+    <string name="iccid_unknown">unknown</string>
+    <string name="operator_unknown">unknown carrier</string>
+</resources>

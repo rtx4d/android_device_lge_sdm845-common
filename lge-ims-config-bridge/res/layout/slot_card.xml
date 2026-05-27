@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+SPDX-License-Identifier: Apache-2.0
+
+Per-slot card. Inflated once per active subscription by MainActivity.
+The Activity finds children by id, so the layout is responsible for
+exposing the right ids: slot_title, iccid, mccmnc, cb_volte/vilte/...,
+btn_apply, btn_reset.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_marginBottom="24dp"
+    android:padding="12dp"
+    android:background="?android:attr/colorBackgroundFloating">
+
+    <TextView
+        android:id="@+id/slot_title"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="?android:attr/textAppearanceMedium"
+        android:textStyle="bold" />
+
+    <TextView
+        android:id="@+id/iccid"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textAppearance="?android:attr/textAppearanceSmall"
+        android:textColor="?android:attr/textColorSecondary"
+        android:fontFamily="monospace" />
+
+    <TextView
+        android:id="@+id/mccmnc"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginBottom="8dp"
+        android:textAppearance="?android:attr/textAppearanceSmall"
+        android:textColor="?android:attr/textColorSecondary" />
+
+    <CheckBox
+        android:id="@+id/cb_volte"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/cb_volte" />
+
+    <CheckBox
+        android:id="@+id/cb_vilte"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/cb_vilte" />
+
+    <CheckBox
+        android:id="@+id/cb_vowifi"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/cb_vowifi" />
+
+    <CheckBox
+        android:id="@+id/cb_viwifi"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/cb_viwifi" />
+
+    <CheckBox
+        android:id="@+id/cb_rcs"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="@string/cb_rcs" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="8dp">
+
+        <Button
+            android:id="@+id/btn_apply"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_apply" />
+
+        <Button
+            android:id="@+id/btn_reset"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="@string/btn_reset" />
+
+    </LinearLayout>
+
+</LinearLayout>

@@ -188,6 +188,7 @@ PRODUCT_PACKAGES += \
     ImsNetworkRequester \
     LGImsPhoneService \
     mmpf_kicker \
+    LgeImsConfigBridge \
     libprocessgroup_shim
 
 PRODUCT_COPY_FILES += \

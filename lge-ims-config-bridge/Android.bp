@@ -2,22 +2,23 @@
 // SPDX-License-Identifier: Apache-2.0
 
 android_app {
-    name: "ImsNetworkRequester",
+    name: "LgeImsConfigBridge",
     system_ext_specific: true,
     privileged: true,
     platform_apis: true,
     certificate: "platform",
     srcs: ["src/**/*.java"],
+    resource_dirs: ["res"],
     manifest: "AndroidManifest.xml",
     required: [
-        "privapp_whitelist_com.lineageos.imsnetworkrequester",
+        "privapp_whitelist_com.lineageos.lgeimsconfigbridge",
     ],
 }
 
 prebuilt_etc {
-    name: "privapp_whitelist_com.lineageos.imsnetworkrequester",
+    name: "privapp_whitelist_com.lineageos.lgeimsconfigbridge",
     system_ext_specific: true,
     sub_dir: "permissions",
-    src: "permissions_com.lineageos.imsnetworkrequester.xml",
+    src: "permissions_com.lineageos.lgeimsconfigbridge.xml",
     filename_from_src: true,
 }

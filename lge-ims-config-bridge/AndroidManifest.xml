@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
+SPDX-License-Identifier: Apache-2.0
+
+LgeImsConfigBridge — replaces stock LG framework's ImsRadioConfigManager
+runtime side, with a default-on policy and a UI for per-SIM override.
+
+Service (LgeImsConfigBridgeService):
+  * On boot and SubscriptionsChanged: writes per-slot
+      persist.product.lge.support{volte,vt,vowifi,viwifi,rcs}[.sim2]
+    sysprops based on per-ICCID user override (SharedPreferences) or the
+    default (everything except RCS enabled).
+  * Sends sticky com.lge.action.VOLTE_CHANGED_INFO with the wire format
+    Ims6's StateInfoChangedReceiver expects.
+  * Sets globals persist.product.lge.ims.volte_open=1 and
+    persist.vendor.lge.ims.dualvolte=1 unconditionally.
+
+Activity (MainActivity):
+  * Per-active-SIM card with checkboxes for VoLTE/ViLTE/VoWiFi/ViWiFi/RCS.
+  * Apply persists override keyed by ICCID. Reset removes override.
+  * Service is kicked via startService() to apply immediately.
+
+Stock equivalents we replace:
+  * com.lge.internal.telephony.ImsRadioConfigManager (framework.jar) —
+    runtime sysprop writer + broadcast sender.
+  * com.lge.hiddenmenu.UniversalEnabler.ActivateVoService (HiddenMenu.apk) —
+    UI for per-SIM toggle.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+          package="com.lineageos.lgeimsconfigbridge"
+          android:versionCode="2"
+          android:versionName="1.1"
+          android:sharedUserId="android.uid.system">
+
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
+    <uses-permission android:name="android.permission.MODIFY_PHONE_STATE" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.BROADCAST_STICKY" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+
+    <application android:label="@string/app_name"
+                 android:directBootAware="true"
+                 android:persistent="true"
+                 android:theme="@style/AppTheme"
+                 android:enabled="true">
+
+        <activity android:name=".MainActivity"
+                  android:label="@string/app_name"
+                  android:exported="true"
+                  android:theme="@style/AppTheme">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <service android:name=".LgeImsConfigBridgeService"
+                 android:exported="false"
+                 android:directBootAware="true" />
+
+        <receiver android:name=".BootReceiver"
+                  android:exported="true"
+                  android:directBootAware="true">
+            <intent-filter android:priority="999">
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
+    </application>
+</manifest>
