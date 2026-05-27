@@ -1,9 +1,10 @@
 // SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
 // SPDX-License-Identifier: Apache-2.0
 //
-// VoConfigUpdateReceiver — compatibility layer with stock LG HiddenMenu.
+// VoConfigUpdateReceiver — passive interop with stock LG's
+// com.lge.action.ACTION_VO_CONFIG_UPDATE protocol.
 //
-// Stock HiddenMenu's "Activate Vo Service" UI applies its choices by:
+// Stock LG's "Activate Vo Service" pipeline applies its choices by:
 //   1. Writing /data/shared/cust/config/vo_config.xml
 //   2. sendStickyBroadcast("com.lge.action.ACTION_VO_CONFIG_UPDATE",
 //                          extra Sender="enabler")
@@ -16,9 +17,8 @@
 // SIM's choice as a per-ICCID override in SharedPreferences, and
 // re-applies via the normal sync path.
 //
-// This means a user can either use our own UI activity OR keep using
-// stock HiddenMenu (if /sdcard/enable_ue is created) and both routes
-// produce the same effect.
+// This is purely passive: we accept any caller that follows the
+// protocol. We do not depend on or trigger any specific producer.
 
 package com.lineageos.lgeimsconfigbridge;
 

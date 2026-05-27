@@ -127,7 +127,15 @@ public class ImsNetworkRequesterService extends Service {
         for (Integer subId : activeIds) {
             if (!mPerSubCallbacks.containsKey(subId)) {
                 SubscriptionInfo info = findSubInfo(subs, subId);
-                ensureImsApnForSub(info);
+                // ensureImsApnForSub disabled 2026-05-27: on this device
+                // every active carrier already has a CARRIER_EDITED ims-row
+                // in telephony.db (inserted by us in earlier sessions, now
+                // persistent across reboots), so the call is a no-op every
+                // boot. Re-enable for testing on a fresh-flashed device or
+                // after factory reset where apns-conf.xml may lack ims-row
+                // for the carrier or have IPv4-only protocol. Code preserved
+                // below for that purpose; do not delete.
+                // ensureImsApnForSub(info);
                 overrideCarrierConfigForSub(info);
                 requestImsForSub(subId);
             }

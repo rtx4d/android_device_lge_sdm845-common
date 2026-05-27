@@ -1,36 +1,35 @@
 // SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
 // SPDX-License-Identifier: Apache-2.0
 //
-// LgeImsConfigBridgeService — applies per-slot LG IMS feature sysprops and
-// emits the broadcasts Ims6 listens for.
+// LgeImsConfigBridgeService — applies per-SIM IMS feature toggles.
 //
-// On stock LG firmware the equivalent pipeline is:
-//   ImsRadioConfigManager.updateConfig(slotId, ...)
-//     -> VoConfigParser.simBasedVoConfig() reads /data/shared/cust/config/vo_config.xml
-//        (operator whitelist) and writes per-slot sysprops
-//     -> broadcastImsConfigChanged() sends sticky com.lge.action.VOLTE_CHANGED_INFO
+// Empirical evidence on this device (2026-05-27 LineageOS, post-stock):
+//   * The per-slot persist.product.lge.support{volte,vt,vowifi,viwifi}[.sim2]
+//     sysprops are NOT consulted by the running LG IMS stack at runtime.
+//     Setting them to "0" did not stop active IMS, even after airplane
+//     toggle + full reboot. They appear to be informational hints only,
+//     useful (maybe) on stock framework but not on our porting surface.
+//   * The com.lge.action.VOLTE_CHANGED_INFO sticky broadcast IS received by
+//     Ims6.app.StateInfoChangedReceiver (verified in logs), but Ims6 treats
+//     it as a policy hint and does not deregister on it.
+//   * The actual per-subscription gate that matters is the AOSP MmTel
+//     provisioning API (ImsMmTelManager.setVoLteSettingEnabled etc.),
+//     plus Settings.Global VOLTE_VT_ENABLED / WFC_IMS_ENABLED for legacy
+//     consumers. These are what Settings.app and the Phone app toggle
+//     when the user flips the carrier-side switches.
 //
-// We do NOT replicate the operator whitelist — it is per-region, far from
-// complete (the stock EU XML covers ~110 carriers, missing most of them
-// including MTS RU 25001 which works fine on real hardware), and shipping
-// a partial whitelist actively breaks users whose carrier we don't know.
+// So this service:
+//   1. Sets globals persist.product.lge.ims.volte_open / dualvolte once.
+//      (Empirically required for the LG stack to start at all.)
+//   2. For each active SIM, applies the user's per-ICCID override (or
+//      defaults: all-on except RCS) via ImsMmTelManager + Settings.Global
+//      writes. THIS is what actually gates per-SIM behavior.
+//   3. Sends sticky com.lge.action.VOLTE_CHANGED_INFO so any LG receiver
+//      that listens (Ims6 does) sees a policy update. Cosmetic on this
+//      port but harmless and matches stock wire format.
 //
-// Empirical evidence (2026-05-27) on this device shows IMS comes up with
-// SETUP_DATA_CALL apn=ims cause=NONE for any reasonable carrier without
-// our sysprops gating anything — the modem does its own IMS subscription
-// check and replies cause=33 only when the carrier really doesn't allow it.
-//
-// Therefore the policy is:
-//   1. Default = all features ENABLED for every SIM (volte=1, vilte=1,
-//      vowifi=1, viwifi=1, rcs=0). Let the modem be the gate.
-//   2. The user can override per-SIM via the LgeImsConfigBridge UI activity
-//      (replicates HiddenMenu's "Activate Vo Service" screen). Choices
-//      are keyed by ICCID and stored in SharedPreferences.
-//   3. Globals (persist.product.lge.ims.volte_open, dualvolte) are set
-//      unconditionally on service start.
-//
-// Ims6 (already ported) listens for VOLTE_CHANGED_INFO via
-// com.lge.ims.app.StateInfoChangedReceiver.
+// The per-slot persist.product.lge.support* sysprops are NO LONGER
+// written. They were noise.
 
 package com.lineageos.lgeimsconfigbridge;
 
@@ -40,9 +39,12 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.IBinder;
 import android.os.SystemProperties;
+import android.provider.Settings;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
+import android.telephony.ims.ImsManager;
+import android.telephony.ims.ImsMmTelManager;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -63,30 +65,20 @@ import java.util.Set;
 public class LgeImsConfigBridgeService extends Service {
     private static final String TAG = "LgeImsCfg";
 
-    // ---------- sysprop keys ----------
-    private static final String[] PROP_VOLTE   = {
-            "persist.product.lge.supportvolte",        // slot 0
-            "persist.product.lge.supportvolte.sim2",   // slot 1
-    };
-    private static final String[] PROP_VT      = {
-            "persist.product.lge.supportvt",
-            "persist.product.lge.supportvt.sim2",
-    };
-    private static final String[] PROP_VOWIFI  = {
-            "persist.product.lge.supportvowifi",
-            "persist.product.lge.supportvowifi.sim2",
-    };
-    private static final String[] PROP_VIWIFI  = {
-            "persist.product.lge.supportviwifi",
-            "persist.product.lge.supportviwifi.sim2",
-    };
-    private static final String[] PROP_RCS     = {
-            "persist.product.lge.supportrcs",
-            "persist.product.lge.supportrcs.sim2",
-    };
-
+    // Globals required by the LG IMS stack to start at all. Set on every
+    // boot regardless of per-SIM config; not user-configurable. These two
+    // are the ones empirically required — the stack will not enter the
+    // VoLTE-capable state without them. Stock LG ships them in
+    // /vendor/build.prop / /product/build.prop persistently; we set them
+    // dynamically so the module remains self-contained.
     private static final String PROP_VOLTE_OPEN = "persist.product.lge.ims.volte_open";
     private static final String PROP_DUALVOLTE  = "persist.vendor.lge.ims.dualvolte";
+
+    // Settings.Global keys used as the legacy per-SIM gate. AOSP IMS code
+    // and the LG stack both consult these. Suffix is the subId.
+    private static final String GS_VOLTE_VT_ENABLED   = "volte_vt_enabled";
+    private static final String GS_WFC_IMS_ENABLED    = "wfc_ims_enabled";
+    private static final String GS_ENHANCED_4G_LTE    = "enhanced_4g_lte_mode_enabled";
 
     // ---------- broadcast wire format ----------
     static final String ACTION_VOLTE_CHANGED_INFO = "com.lge.action.VOLTE_CHANGED_INFO";
@@ -259,26 +251,28 @@ public class LgeImsConfigBridgeService extends Service {
             }
         }
 
-        // Empty slots: leave sysprops untouched. Inherited "1" values from
-        // a prior SIM (or stock LG persist) reflect modem activation state
-        // that the modem will gate independently. Nothing here to enforce.
+        // Empty slots: no per-sub MmTel call possible (needs valid subId).
+        // Settings.Global keys keyed by subId of the previous SIM remain
+        // until the next time that subId becomes active again. This mirrors
+        // AOSP behavior (Settings.app does the same).
         for (int slot = 0; slot < slotCount; slot++) {
             if (!active.contains(slot)) {
-                Log.i(TAG, "[slot " + slot + "] no SIM, leaving sysprops untouched");
+                Log.i(TAG, "[slot " + slot + "] no SIM");
             }
         }
     }
 
     private void applyForSlot(int slot, SubscriptionInfo info) {
+        int subId = info.getSubscriptionId();
         String iccid = nullToEmpty(info.getIccId());
         String mccmnc = nullToEmpty(info.getMccString())
                 + nullToEmpty(info.getMncString());
 
         VoConfig cfg = resolveConfig(iccid);
-        Log.i(TAG, "[slot " + slot + "] iccid=" + redact(iccid)
+        Log.i(TAG, "[slot " + slot + " sub=" + subId + "] iccid=" + redact(iccid)
                 + " mccmnc=" + mccmnc + " -> " + cfg);
 
-        writeSyspropsForSlot(slot, cfg);
+        applyMmTelSettings(subId, cfg);
         broadcastVolteChanged(slot, cfg);
         VoConfig prev = mLastEmitted.get(slot);
         if (prev == null || prev.rcs != cfg.rcs) {
@@ -319,15 +313,134 @@ public class LgeImsConfigBridgeService extends Service {
         syncAllSlots();
     }
 
-    // ---------- sysprop writes ----------
+    // ---------- MmTel settings + Settings.Global writes ----------
 
-    private void writeSyspropsForSlot(int slot, VoConfig cfg) {
-        if (slot < 0 || slot > 1) return;
-        setProp(PROP_VOLTE[slot],  cfg.volte  ? "1" : "0");
-        setProp(PROP_VT[slot],     cfg.vilte  ? "1" : "0");
-        setProp(PROP_VOWIFI[slot], cfg.vowifi ? "1" : "0");
-        setProp(PROP_VIWIFI[slot], cfg.viwifi ? "1" : "0");
-        setProp(PROP_RCS[slot],    cfg.rcs    ? "1" : "0");
+    /**
+     * Apply per-subscription IMS feature toggles via the AOSP MmTel API
+     * AND the legacy Settings.Global keys.
+     *
+     * The MmTel API (ImsMmTelManager.setVoLteSettingEnabled etc.) writes
+     * to provisioning storage that the IMS service consults on every
+     * registration evaluation. This is THE per-SIM gate on Android 11+.
+     *
+     * The Settings.Global keys (volte_vt_enabled, wfc_ims_enabled,
+     * enhanced_4g_lte_mode_enabled, suffixed by subId) are the legacy
+     * gate that older code paths and OEM stacks still consult. We write
+     * both for maximum coverage.
+     */
+    private void applyMmTelSettings(int subId, VoConfig cfg) {
+        // *** THE REAL VOLTE GATE on this LineageOS port ***
+        //
+        // Reverse-engineered from decompiled framework ims-common ImsManager
+        // (lge/decompiled/ims-common/sources/com/android/ims/ImsManager.java
+        //  line 1698 isVolteEnabledByPlatform):
+        //
+        //   if (debug_override_prop || voims_opt_in_status == 1) return true;
+        //   if (!FEATURE_VOLTE_OPEN) { ...AOSP carrier_config check... }
+        //   // FEATURE_VOLTE_OPEN branch:
+        //   if (persist.product.lge.supportvolte[.sim2] == 1) return true;
+        //   return false;
+        //
+        // The voims_opt_in_status check at the TOP overrides everything else.
+        // It lives in the SubscriptionManager subscription property table
+        // (telephony.db siminfo column "voims_opt_in_status"). On this device
+        // it was set to "1" for both subs by stock LG framework (and survived
+        // stock->LineageOS reflash because /data wasn't wiped). That's why
+        // toggling sysprops or Settings.Global has no effect — the gate
+        // returns true at line 1700 before ever reaching them.
+        //
+        // We write this property via SubscriptionManager.setSubscriptionProperty
+        // (hidden API on Android 15, reachable via reflection from a
+        // platform-uid app like ours). When 1: VoLTE forced enabled. When 0:
+        // VoLTE falls through to the legacy sysprop / carrier_config gate.
+        try {
+            setSubscriptionProperty(subId, "voims_opt_in_status", cfg.volte ? "1" : "0");
+        } catch (Exception e) {
+            Log.w(TAG, "[sub=" + subId + "] voims_opt_in_status write failed: "
+                    + e.getMessage());
+        }
+
+        // 1. AOSP MmTel API — VT and VoWiFi switches. Public on Android 15.
+        try {
+            ImsManager im = getSystemService(ImsManager.class);
+            if (im != null) {
+                ImsMmTelManager mm = im.getImsMmTelManager(subId);
+                if (mm != null) {
+                    try {
+                        mm.setVtSettingEnabled(cfg.vilte);
+                    } catch (Exception ignored) { }
+                    try {
+                        mm.setVoWiFiSettingEnabled(cfg.vowifi);
+                    } catch (Exception ignored) { }
+                    try {
+                        mm.setVoWiFiRoamingSettingEnabled(cfg.vowifi);
+                    } catch (Exception ignored) { }
+                    Log.i(TAG, "[sub=" + subId + "] MmTel: vilte=" + cfg.vilte
+                            + " vowifi=" + cfg.vowifi);
+                }
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "[sub=" + subId + "] MmTel apply failed: " + e.getMessage());
+        }
+
+        // 2. Settings.Global — secondary gates that AOSP and OEM code paths
+        // also consult. Mirrors voims_opt_in for consistency.
+        try {
+            putGlobalInt(GS_VOLTE_VT_ENABLED + subId, cfg.volte ? 1 : 0);
+            putGlobalInt(GS_ENHANCED_4G_LTE + subId, cfg.volte ? 1 : 0);
+            putGlobalInt(GS_WFC_IMS_ENABLED + subId, cfg.vowifi ? 1 : 0);
+        } catch (Exception e) {
+            Log.w(TAG, "[sub=" + subId + "] Settings.Global write failed: "
+                    + e.getMessage());
+        }
+
+        // 3. Legacy LG per-slot sysprops. Empirically NOT a runtime gate on
+        // this port (proven by setting them to 0 with no effect on running
+        // IMS), but they're cheap to maintain and may be consulted by other
+        // OEM components we haven't audited (carrier reset path, settings UI).
+        // Slot-indexed; subId != slotId in general but on this device (DSDS
+        // with slot 0/1 == phoneId 0/1) they coincide.
+        int slot = mSm != null
+                ? mSm.getSlotIndex(subId)
+                : SubscriptionManager.INVALID_SIM_SLOT_INDEX;
+        if (slot == 0 || slot == 1) {
+            String suffix = slot == 0 ? "" : ".sim2";
+            setProp("persist.product.lge.supportvolte" + suffix,  cfg.volte  ? "1" : "0");
+            setProp("persist.product.lge.supportvt" + suffix,     cfg.vilte  ? "1" : "0");
+            setProp("persist.product.lge.supportvowifi" + suffix, cfg.vowifi ? "1" : "0");
+            setProp("persist.product.lge.supportviwifi" + suffix, cfg.viwifi ? "1" : "0");
+            setProp("persist.product.lge.supportrcs" + suffix,    cfg.rcs    ? "1" : "0");
+        }
+    }
+
+    /**
+     * SubscriptionManager.setSubscriptionProperty is hidden API on Android 15.
+     * We're a platform-uid app with system signature, so reflection works.
+     * Writes go to /data/user_de/0/com.android.providers.telephony/databases/telephony.db
+     * siminfo table, column matching the property name (e.g. voims_opt_in_status).
+     */
+    private void setSubscriptionProperty(int subId, String propertyName, String value)
+            throws Exception {
+        java.lang.reflect.Method m = SubscriptionManager.class.getMethod(
+                "setSubscriptionProperty",
+                int.class, String.class, String.class);
+        m.invoke(null, subId, propertyName, value);
+        Log.i(TAG, "[sub=" + subId + "] " + propertyName + "=" + value
+                + " (via setSubscriptionProperty)");
+    }
+
+    private void putGlobalInt(String key, int value) {
+        try {
+            int prev = Settings.Global.getInt(getContentResolver(), key, -1);
+            if (prev != value) {
+                Settings.Global.putInt(getContentResolver(), key, value);
+                Log.i(TAG, "Settings.Global " + key + "=" + value
+                        + " (was " + prev + ")");
+            }
+        } catch (SecurityException e) {
+            Log.e(TAG, "Settings.Global " + key + "=" + value
+                    + " denied: " + e.getMessage());
+        }
     }
 
     private static void setProp(String key, String value) {

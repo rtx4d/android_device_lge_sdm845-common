@@ -58,10 +58,11 @@ the service to re-apply. Reset drops the override and reverts to defaults.
 
 ## Stock HiddenMenu compatibility
 
-The bridge also accepts input from stock LG HiddenMenu's
-"Activate Vo Service" UI. When the user applies via HiddenMenu, it:
-1. Writes `/data/shared/cust/config/vo_config.xml`
-2. Sends sticky `com.lge.action.ACTION_VO_CONFIG_UPDATE`
+The bridge also accepts input from any caller using stock LG's
+`com.lge.action.ACTION_VO_CONFIG_UPDATE` protocol — same one stock
+HiddenMenu uses internally:
+1. Caller writes `/data/shared/cust/config/vo_config.xml`
+2. Caller sends sticky `com.lge.action.ACTION_VO_CONFIG_UPDATE`
 
 `VoConfigUpdateReceiver` listens for that action and forwards it to the
 service, which re-parses the XML, runs the same 8-tier specificity match
@@ -69,9 +70,10 @@ stock `VoConfigParser` uses (mcc + mnc + gid + spn + imsi → catch-all),
 and persists each matched SIM's choice as a per-ICCID override. The
 result is identical to using our own UI activity.
 
-This means a user can keep using the stock HiddenMenu workflow if they
-prefer (`mkdir /sdcard/enable_ue` to unlock the menu first), and our
-bridge will pick up the changes without any further wiring.
+This is a passive interop layer — we don't depend on stock HiddenMenu
+being present, and we don't trigger it. It just means anything else in
+the system that produces stock-style `vo_config.xml` and the broadcast
+will be picked up.
 
 ## Pipeline
 

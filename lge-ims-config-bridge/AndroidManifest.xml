@@ -3,34 +3,31 @@
 SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
 SPDX-License-Identifier: Apache-2.0
 
-LgeImsConfigBridge — replaces stock LG framework's ImsRadioConfigManager
-runtime side, with a default-on policy and a UI for per-SIM override.
+LgeImsConfigBridge — applies per-SIM IMS feature toggles on LineageOS.
 
 Service (LgeImsConfigBridgeService):
-  * On boot and SubscriptionsChanged: writes per-slot
-      persist.product.lge.support{volte,vt,vowifi,viwifi,rcs}[.sim2]
-    sysprops based on per-ICCID user override (SharedPreferences) or the
-    default (everything except RCS enabled).
-  * Sends sticky com.lge.action.VOLTE_CHANGED_INFO with the wire format
-    Ims6's StateInfoChangedReceiver expects.
+  * On boot and SubscriptionsChanged: applies per-ICCID user override
+    (or defaults) via AOSP ImsMmTelManager API + Settings.Global keys
+    (volte_vt_enabled, enhanced_4g_lte_mode_enabled, wfc_ims_enabled).
+  * Sends sticky com.lge.action.VOLTE_CHANGED_INFO matching stock LG
+    wire format (cosmetic / interop with Ims6.StateInfoChangedReceiver).
   * Sets globals persist.product.lge.ims.volte_open=1 and
-    persist.vendor.lge.ims.dualvolte=1 unconditionally.
+    persist.vendor.lge.ims.dualvolte=1 unconditionally — these ARE
+    required for the LG IMS stack to start at all.
 
 Activity (MainActivity):
   * Per-active-SIM card with checkboxes for VoLTE/ViLTE/VoWiFi/ViWiFi/RCS.
   * Apply persists override keyed by ICCID. Reset removes override.
   * Service is kicked via startService() to apply immediately.
 
-Stock equivalents we replace:
-  * com.lge.internal.telephony.ImsRadioConfigManager (framework.jar) —
-    runtime sysprop writer + broadcast sender.
-  * com.lge.hiddenmenu.UniversalEnabler.ActivateVoService (HiddenMenu.apk) —
-    UI for per-SIM toggle.
+Receiver (VoConfigUpdateReceiver):
+  * Passive interop with stock LG's com.lge.action.ACTION_VO_CONFIG_UPDATE
+    protocol — re-imports /data/shared/cust/config/vo_config.xml.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           package="com.lineageos.lgeimsconfigbridge"
-          android:versionCode="2"
-          android:versionName="1.1"
+          android:versionCode="3"
+          android:versionName="1.2"
           android:sharedUserId="android.uid.system">
 
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -40,6 +37,9 @@ Stock equivalents we replace:
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.BROADCAST_STICKY" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" />
+    <!-- Required by ImsMmTelManager.setVoLte/Vt/VoWiFiSettingEnabled
+         on Android 14+. Granted automatically to platform-signed apps. -->
+    <uses-permission android:name="android.permission.PERFORM_IMS_SINGLE_REGISTRATION" />
 
     <!--
     Declare our two LG broadcasts as protected so AOSP's
@@ -84,12 +84,13 @@ Stock equivalents we replace:
         </receiver>
 
         <!--
-        Compatibility receiver: stock LG HiddenMenu's "Activate Vo Service"
-        applies changes by writing /data/shared/cust/config/vo_config.xml then
-        firing this sticky broadcast (with extra Sender="enabler"). Stock
-        firmware processes this in framework.jar's ImsRadioConfigManager;
-        LineageOS doesn't import that class, so we receive it ourselves and
-        forward to the service for XML import + sync.
+        Passive interop receiver: anything in the system that uses
+        stock LG's protocol (write /data/shared/cust/config/vo_config.xml
+        + sticky com.lge.action.ACTION_VO_CONFIG_UPDATE) gets picked up
+        here and routed through the service for XML import + sync.
+        Stock firmware processes this in framework.jar's
+        ImsRadioConfigManager; LineageOS doesn't import that class, so
+        we receive it ourselves.
         -->
         <receiver android:name=".VoConfigUpdateReceiver"
                   android:exported="true"
