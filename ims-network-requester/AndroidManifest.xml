@@ -35,6 +35,11 @@ that single call, nothing more.
          no IMS APN row is loaded. Works around an AOSP DataProfileManager
          race that breaks IMS on the second slot in DSDS. -->
     <uses-permission android:name="android.permission.WRITE_APN_SETTINGS" />
+    <!-- Override carrier_config persistent_fail_causes for IMS so that
+         cause=33 SERVICE_OPTION_NOT_SUBSCRIBED on first attempt does not
+         permanently fail the IMS data profile. Without this Beeline RU
+         IMS on slot 1 dies after a single modem rejection. -->
+    <uses-permission android:name="android.permission.MODIFY_PHONE_STATE" />
 
     <application android:label="ImsNetworkRequester"
                  android:directBootAware="true"

@@ -32,6 +32,8 @@ import android.net.NetworkRequest;
 import android.net.TelephonyNetworkSpecifier;
 import android.net.Uri;
 import android.os.IBinder;
+import android.os.PersistableBundle;
+import android.telephony.CarrierConfigManager;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.text.TextUtils;
@@ -48,6 +50,7 @@ public class ImsNetworkRequesterService extends Service {
 
     private ConnectivityManager mCm;
     private SubscriptionManager mSm;
+    private CarrierConfigManager mCcm;
     private final Map<Integer, ConnectivityManager.NetworkCallback> mPerSubCallbacks =
             new HashMap<>();
     private SubscriptionManager.OnSubscriptionsChangedListener mSubsListener;
@@ -58,6 +61,7 @@ public class ImsNetworkRequesterService extends Service {
         Log.i(TAG, "Service onCreate");
         mCm = getSystemService(ConnectivityManager.class);
         mSm = getSystemService(SubscriptionManager.class);
+        mCcm = getSystemService(CarrierConfigManager.class);
 
         // Watch for SIM hot-swaps. Stock LG fires the IMS requestNetwork
         // from com.lge.lgdataphone.dataconnection.ApnManager which also
@@ -124,6 +128,7 @@ public class ImsNetworkRequesterService extends Service {
             if (!mPerSubCallbacks.containsKey(subId)) {
                 SubscriptionInfo info = findSubInfo(subs, subId);
                 ensureImsApnForSub(info);
+                overrideCarrierConfigForSub(info);
                 requestImsForSub(subId);
             }
         }
@@ -227,6 +232,68 @@ public class ImsNetworkRequesterService extends Service {
                     + numeric + " -> " + inserted);
         } catch (Exception e) {
             Log.e(TAG, "[sub=" + info.getSubscriptionId() + "] IMS APN insert failed: "
+                    + e.getMessage());
+        }
+    }
+
+    // Strip cause=33 (SERVICE_OPTION_NOT_SUBSCRIBED) from the IMS data-setup
+    // permanent_fail_causes list in this sub's carrier_config.
+    //
+    // Background: AOSP DataConfigManager parses
+    // CarrierConfigManager.KEY_TELEPHONY_DATA_SETUP_RETRY_RULES_STRING_ARRAY
+    // into a list of DataSetupRetryRule. The default LineageOS rules include
+    //
+    //   permanent_fail_causes=8|27|28|29|30|32|33|35|50|51|111|...
+    //
+    // on the eims rule (which has empty `capabilities=` so it acts as a
+    // wildcard — see DataSetupRetryRule.canBeMatched). cause=33 in that list
+    // means: the FIRST modem rejection of an apn=ims SETUP_DATA_CALL with
+    // cause=33 immediately marks the IMS profile permanent_failed. DPM stops
+    // retrying. IMS is dead until reboot.
+    //
+    // Beeline RU on slot 1 in DSDS reliably produces cause=33 on the first
+    // attempt (root reason unknown — happens on slot 1 only). Removing 33
+    // from the eims rule keeps DPM retrying. Subsequent attempts often
+    // succeed (modem actually accepts IMS subscription on retry).
+    //
+    // This is the runtime equivalent of:
+    //   cmd phone cc set-value -p -s SLOT KEY \
+    //       "capabilities=eims, retry_interval=1000, maximum_retries=20" \
+    //       "permanent_fail_causes=8|27|28|29|30|32|35|50|51|111|...,
+    //        retry_interval=2500" \
+    //       "capabilities=mms|supl|cbs|rcs, retry_interval=2000" \
+    //       "capabilities=internet|enterprise|dun|ims|fota|xcap|mcx|...
+    //        retry_interval=2500|3000|..., maximum_retries=20"
+    //
+    // overrideConfig(persistent=true) writes through to
+    // /data/user_de/0/com.android.phone/persistent_telephony_carrier_config.xml
+    // so the override survives reboots without rerunning here.
+    private void overrideCarrierConfigForSub(SubscriptionInfo info) {
+        if (info == null || mCcm == null) return;
+        int subId = info.getSubscriptionId();
+        try {
+            String[] rules = new String[]{
+                "capabilities=eims, retry_interval=1000, maximum_retries=20",
+                // 33 removed from the list:
+                "permanent_fail_causes=8|27|28|29|30|32|35|50|51|111|-5|-6|"
+                        + "65537|65538|-3|65543|65547|2252|2253|2254, "
+                        + "retry_interval=2500",
+                "capabilities=mms|supl|cbs|rcs, retry_interval=2000",
+                "capabilities=internet|enterprise|dun|ims|fota|xcap|mcx|"
+                        + "prioritize_bandwidth|prioritize_latency, "
+                        + "retry_interval=2500|3000|5000|10000|15000|20000|"
+                        + "40000|60000|120000|240000|600000|1200000|1800000, "
+                        + "maximum_retries=20",
+            };
+            PersistableBundle b = new PersistableBundle();
+            b.putStringArray(
+                    CarrierConfigManager.KEY_TELEPHONY_DATA_SETUP_RETRY_RULES_STRING_ARRAY,
+                    rules);
+            mCcm.overrideConfig(subId, b, /* persistent= */ true);
+            Log.i(TAG, "[sub=" + subId + "] carrier_config override applied "
+                    + "(removed cause=33 from permanent_fail_causes)");
+        } catch (Exception e) {
+            Log.e(TAG, "[sub=" + subId + "] carrier_config override failed: "
                     + e.getMessage());
         }
     }

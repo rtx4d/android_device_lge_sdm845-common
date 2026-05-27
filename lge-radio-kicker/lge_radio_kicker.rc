@@ -1,24 +1,34 @@
 # SPDX-FileCopyrightText: 2026 LineageOS — caymanslm port
 # SPDX-License-Identifier: Apache-2.0
 #
-# lge_radio_kicker — fire RIL_REQUEST_DATA_PDN_THROTTLE_IND_REPORT enable=false
-# once at boot to mirror the stock LG framework path.
+# lge_radio_kicker — periodically fire RIL_REQUEST_DATA_PDN_THROTTLE_IND_REPORT
+# enable=false on every ILgeRadio instance to keep qcrild's local PDN-failure
+# throttler disabled.
 #
-# Runs as oneshot in the hal class so it shares startup ordering with
-# vendor.lge-vss_ims-hal-1-0 and qcrild. The actual call only happens after
-# qcrild has registered ILgeRadio/lge_radio with hwservicemanager — kicker
-# retries with 2s spacing until it appears.
+# Why a long-running daemon and not oneshot:
+# qcrild auto-rearms the throttler after every modem failure (e.g. cause=33
+# SERVICE_OPTION_NOT_SUBSCRIBED on first slot 1 IMS attach for Beeline RU).
+# A single kick at boot only opens the throttler window once; the very first
+# real SETUP_DATA_CALL that comes back with cause=33 closes it again, and from
+# then on every retry returns PDN_IPV4_CALL_THROTTLED (0x7f2) without ever
+# reaching the modem. The daemon kicks both ILgeRadio instances every 10s so
+# AOSP DRM's retries always land in a throttler-disabled window.
+#
+# Class hal so it shares startup ordering with vendor.lge-vss_ims-hal-1-0 and
+# qcrild. Runs forever — the binary's main loop is `while(true) { kick; sleep 10s; }`.
 
 service vendor.lge_radio_kicker /vendor/bin/hw/lge_radio_kicker
     class hal
     user system
     group system net_raw radio
     capabilities NET_BIND_SERVICE
-    oneshot
     disabled
 
 # qcrild publishes ILgeRadio after RIL_register completes. By the time
 # vendor.ims.QMI_DAEMON_STATUS=1 is set, qcrild itself is already running
-# and ILgeRadio is registered, so this trigger fires once per boot.
+# and ILgeRadio is registered, so this trigger fires the daemon once. The
+# daemon then loops forever, gracefully handling the case where lge_radio2
+# only appears later (qcrild2 starts a few seconds after qcrild) or never
+# appears at all (single-SIM build).
 on property:vendor.ims.QMI_DAEMON_STATUS=1
     start vendor.lge_radio_kicker

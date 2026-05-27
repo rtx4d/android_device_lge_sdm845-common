@@ -17,5 +17,6 @@ system-uid signature app that needs:
         <permission name="android.permission.NETWORK_SETTINGS"/>
         <permission name="android.permission.READ_PHONE_STATE"/>
         <permission name="android.permission.WRITE_APN_SETTINGS"/>
+        <permission name="android.permission.MODIFY_PHONE_STATE"/>
     </privapp-permissions>
 </permissions>
