@@ -22,4 +22,12 @@ SPDX-License-Identifier: Apache-2.0
     <string name="toast_reset">Reset to defaults.</string>
     <string name="iccid_unknown">unknown</string>
     <string name="operator_unknown">unknown carrier</string>
+
+    <!-- Modem NV (Advanced) section -->
+    <string name="modem_nv_section_title">Modem NV (Advanced)</string>
+    <string name="modem_nv_section_warning">Writes here go directly to modemst1/modemst2 and SURVIVE factory reset. Read first; only write if you know the expected value. A wrong write can take several reboots to recover from.</string>
+    <string name="modem_nv_status_idle">Tap Read to query current modem-NV values.</string>
+    <string name="btn_modem_nv_read">Read</string>
+    <string name="btn_modem_nv_write_volte_on">Write VoLTE=1</string>
+    <string name="btn_modem_nv_write_vowifi_on">Write VoWiFi=1</string>
 </resources>

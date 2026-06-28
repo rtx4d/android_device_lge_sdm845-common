@@ -33,5 +33,66 @@ Activity populates per active subscription.
             android:layout_height="wrap_content"
             android:orientation="vertical" />
 
+        <!--
+        Advanced section: direct access to the QcRilHook OEM-hook
+        channel for reading/writing modem NV items (CMD_IMS_VLT etc).
+        Hidden behind a label because mistakes here can persist across
+        factory reset (modemst1/modemst2). Requires BOOT_COMPLETED so
+        QcrilMsgTunnelService can bind.
+        -->
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textAppearance="?android:attr/textAppearanceMedium"
+            android:textStyle="bold"
+            android:text="@string/modem_nv_section_title" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="8dp"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:textColor="?android:attr/textColorSecondary"
+            android:text="@string/modem_nv_section_warning" />
+
+        <TextView
+            android:id="@+id/modem_nv_status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:fontFamily="monospace"
+            android:textIsSelectable="true"
+            android:textAppearance="?android:attr/textAppearanceSmall"
+            android:text="@string/modem_nv_status_idle" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btn_modem_nv_read"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_modem_nv_read" />
+
+            <Button
+                android:id="@+id/btn_modem_nv_write_volte_on"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_modem_nv_write_volte_on" />
+
+            <Button
+                android:id="@+id/btn_modem_nv_write_vowifi_on"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="@string/btn_modem_nv_write_vowifi_on" />
+        </LinearLayout>
+
     </LinearLayout>
 </ScrollView>

@@ -26,8 +26,8 @@ Receiver (VoConfigUpdateReceiver):
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           package="com.lineageos.lgeimsconfigbridge"
-          android:versionCode="3"
-          android:versionName="1.2"
+          android:versionCode="16"
+          android:versionName="1.15"
           android:sharedUserId="android.uid.system">
 
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
@@ -53,12 +53,30 @@ Receiver (VoConfigUpdateReceiver):
     <protected-broadcast android:name="com.lge.action.VOLTE_CHANGED_INFO" />
     <protected-broadcast android:name="com.lge.action.RCS_CHANGED_INFO" />
     <protected-broadcast android:name="com.lge.action.ACTION_VO_CONFIG_UPDATE" />
+    <!--
+    Re-emitted to feed Ims6's legacy SIMStateAgent.SIMStateReceiverListener
+    which expects the pre-Android-13 broadcast format. AOSP TelephonyRegistry
+    on Android 15 stopped emitting it; we replay it whenever SubscriptionManager
+    reports an active sub. Stock LG framework declared this protected; we
+    mirror that so AOSP BroadcastController doesn't wtf.
+    -->
+    <protected-broadcast android:name="android.intent.action.SIM_STATE_CHANGED" />
 
     <application android:label="@string/app_name"
                  android:directBootAware="true"
                  android:persistent="true"
                  android:theme="@style/AppTheme"
                  android:enabled="true">
+
+        <!--
+        com.qualcomm.qcrilhook contains the AIDL stubs (IQcrilMsgTunnel,
+        IOemHookCallback) we use to bind QcrilMsgTunnelService directly.
+        We bypass the stock LG lgsvcitems route because it goes through
+        TelephonyManager.invokeOemRilRequestRaw which AOSP removed in
+        Android 15. Both jars live in /system_ext/framework/.
+        -->
+        <uses-library android:name="com.qualcomm.qcrilhook"
+                      android:required="true" />
 
         <activity android:name=".MainActivity"
                   android:label="@string/app_name"

@@ -10,9 +10,27 @@ android_app {
     srcs: ["src/**/*.java"],
     resource_dirs: ["res"],
     manifest: "AndroidManifest.xml",
+    libs: [
+        // Compile-time-only stubs of com.qualcomm.qcrilhook /
+        // com.qualcomm.qcrilmsgtunnel. Runtime <uses-library> resolves
+        // these symbols to the real on-device qcrilhook.jar (which
+        // contains the AIDL Stub/Proxy used to bind QcrilMsgTunnelService).
+        // We can't compile against the real jar because it's a
+        // dex_import (classes.dex only, no .class files).
+        "lgeimsconfigbridge-qcrilhook-stub",
+    ],
+    enforce_uses_libs: false,
     required: [
         "privapp_whitelist_com.lineageos.lgeimsconfigbridge",
     ],
+}
+
+// Compile-only stub of com.qualcomm.qcrilhook + com.qualcomm.qcrilmsgtunnel.
+java_library {
+    name: "lgeimsconfigbridge-qcrilhook-stub",
+    srcs: ["stub-src/**/*.java"],
+    sdk_version: "system_current",
+    installable: false,
 }
 
 prebuilt_etc {

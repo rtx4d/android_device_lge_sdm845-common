@@ -20,13 +20,14 @@ those features are unrelated to the VoLTE registration path.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
           package="com.lineageos.lgimsphone"
-          android:versionCode="1"
-          android:versionName="1.0"
+          android:versionCode="6"
+          android:versionName="1.5"
           android:sharedUserId="android.uid.system">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+    <uses-permission android:name="android.permission.READ_PRIVILEGED_PHONE_STATE" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.CONNECTIVITY_INTERNAL" />
     <uses-permission android:name="android.permission.CONNECTIVITY_USE_RESTRICTED_NETWORKS" />

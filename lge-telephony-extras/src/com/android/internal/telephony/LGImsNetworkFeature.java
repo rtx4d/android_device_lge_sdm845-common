@@ -139,6 +139,18 @@ public final class LGImsNetworkFeature implements Parcelable {
         mVoPSOn3G = v; return 1024;
     }
 
+    // Public façade for the package-private setters above. lg-ims-phone-service
+    // builds against this jar via uses-library, not as the same package, so it
+    // can't reach the original setters. These return the FEATURE_* bitmask of
+    // the field that changed (0 if unchanged) — same contract as stock.
+    public int updateAcBarringForEmergency(int v) { return setAcBarringForEmergency(v); }
+    public int updateEmcBs(int v)                  { return setEmcBs(v); }
+    public int updateImsEmergencySupport(int v)    { return setImsEmergencySupport(v); }
+    public int updatePlmn1(String v)               { return setPlmn1(v); }
+    public int updatePlmn2(String v)               { return setPlmn2(v); }
+    public int updateVoPS(int v)                   { return setVoPS(v); }
+    public int updateVoPSOn3G(int v)               { return setVoPSOn3G(v); }
+
     @Override public String toString() {
         return "{ imsEmergencySupport=" + mImsEmergencySupport
                 + ", acBarringForEmergency=" + mAcBarringForEmergency

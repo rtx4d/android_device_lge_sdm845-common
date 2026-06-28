@@ -39,12 +39,14 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.IBinder;
 import android.os.SystemProperties;
-import android.provider.Settings;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
 import android.telephony.ims.ImsManager;
 import android.telephony.ims.ImsMmTelManager;
+import android.telephony.ims.ProvisioningManager;
+import android.telephony.ims.feature.MmTelFeature;
+import android.telephony.ims.stub.ImsRegistrationImplBase;
 import android.text.TextUtils;
 import android.util.Log;
 
@@ -74,12 +76,6 @@ public class LgeImsConfigBridgeService extends Service {
     private static final String PROP_VOLTE_OPEN = "persist.product.lge.ims.volte_open";
     private static final String PROP_DUALVOLTE  = "persist.vendor.lge.ims.dualvolte";
 
-    // Settings.Global keys used as the legacy per-SIM gate. AOSP IMS code
-    // and the LG stack both consult these. Suffix is the subId.
-    private static final String GS_VOLTE_VT_ENABLED   = "volte_vt_enabled";
-    private static final String GS_WFC_IMS_ENABLED    = "wfc_ims_enabled";
-    private static final String GS_ENHANCED_4G_LTE    = "enhanced_4g_lte_mode_enabled";
-
     // ---------- broadcast wire format ----------
     static final String ACTION_VOLTE_CHANGED_INFO = "com.lge.action.VOLTE_CHANGED_INFO";
     static final String ACTION_RCS_CHANGED_INFO   = "com.lge.action.RCS_CHANGED_INFO";
@@ -102,6 +98,37 @@ public class LgeImsConfigBridgeService extends Service {
     private SharedPreferences mPrefs;
 
     private final Map<Integer, VoConfig> mLastEmitted = new HashMap<>();
+    /** Lazy modem-NV writer (binds to QcRilMsgTunnelService on first use). */
+    private LgeModemNvWriter mModemNv;
+    /**
+     * True once BOOT_COMPLETED arrived. QcrilMsgTunnelService is NOT
+     * directBootAware, so any bindService() before user-unlock fails
+     * silently and the singleton inside QcRilHook gets stuck with
+     * mBound=false forever. Gate modem-NV writes behind this flag and
+     * pull the wave back through syncAllSlots() once the flag flips.
+     */
+    private boolean mBootCompleted;
+    /**
+     * Per-slot record of the VoConfig we have actually pushed into the
+     * modem via OEM_HOOK. Distinct from mLastEmitted (which tracks the
+     * last *Java/Telephony* state) because modem-NV writes are gated
+     * on BOOT_COMPLETED — the first applyForSlot() at LOCKED_BOOT
+     * succeeds for MmTel/sysprops/sticky-broadcasts but is skipped for
+     * the modem path; without a separate ledger the second pass would
+     * see "no change vs mLastEmitted" and skip the modem too, leaving
+     * the modem state perpetually unsynced.
+     */
+    private final Map<Integer, VoConfig> mLastModemNv = new HashMap<>();
+    /**
+     * Single-thread executor for modem-NV writes. Must NOT be the main
+     * thread because LgSvcCmd's underlying QcRilHook signals readiness
+     * via a ServiceConnection callback dispatched on the main thread —
+     * blocking the main thread to poll for that readiness creates a
+     * deadlock that takes ~16s to time out (8s × two writes) before
+     * onServiceConnected finally lands.
+     */
+    private final java.util.concurrent.ExecutorService mModemNvExecutor =
+            java.util.concurrent.Executors.newSingleThreadExecutor();
 
     // ---------- model ----------
 
@@ -204,6 +231,15 @@ public class LgeImsConfigBridgeService extends Service {
         if (VoConfigUpdateReceiver.ACTION_VO_CONFIG_UPDATE.equals(action)) {
             importVoConfigXml();
         }
+        // BootReceiver tags the BOOT_COMPLETED kick. We use that as our
+        // signal that user-unlock happened and CE-encrypted services like
+        // QcrilMsgTunnelService can finally serve binds; until then,
+        // applyModemNv() bails out so we don't waste 8 seconds polling
+        // a tunnel that can't possibly answer.
+        if (intent != null && intent.getBooleanExtra("boot_completed", false)) {
+            mBootCompleted = true;
+            Log.i(TAG, "Boot completed - modem-NV writes now permitted");
+        }
         syncAllSlots();
         return START_STICKY;
     }
@@ -217,6 +253,7 @@ public class LgeImsConfigBridgeService extends Service {
             } catch (Exception ignored) { }
             mSubsListener = null;
         }
+        mModemNvExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -273,12 +310,130 @@ public class LgeImsConfigBridgeService extends Service {
                 + " mccmnc=" + mccmnc + " -> " + cfg);
 
         applyMmTelSettings(subId, cfg);
+        applyModemNv(slot, cfg);
         broadcastVolteChanged(slot, cfg);
         VoConfig prev = mLastEmitted.get(slot);
         if (prev == null || prev.rcs != cfg.rcs) {
             broadcastRcsChanged(slot, cfg);
         }
+        broadcastSimStateLoaded(slot, subId);
         mLastEmitted.put(slot, cfg);
+    }
+
+    /**
+     * Push VoLTE/VoWiFi master switches into modem NV via the stock
+     * QcRilHook OEM_HOOK channel. This is the modem-side counterpart
+     * to applyMmTelSettings(): the latter flips Java/Telephony toggles
+     * but does not touch what the modem itself believes about VoLTE
+     * support for this subscription. On a fresh ICCID the modem
+     * decides whether to advertise VoPS=on and accept the apn=ims
+     * dedicated bearer based on what is in modemst1/modemst2 (which
+     * survives factory reset and OS reflash). HiddenMenu's Apply on
+     * stock LG firmware ultimately routes through this same channel
+     * via stock framework.jar's ImsRadioConfigManager — that class is
+     * absent in LineageOS so without this call our modem stays at the
+     * factory-default-from-the-day-the-phone-was-built state.
+     *
+     * Runs on a worker thread because LgSvcCmd's underlying QcRilHook
+     * binds to QcrilMsgTunnelService asynchronously and signals readiness
+     * via a ServiceConnection callback delivered on the *main* thread —
+     * if we polled getIQcrilMsgTunnelServiceStatus() from the main
+     * thread we'd block the very dispatch loop that needs to run
+     * onServiceConnected, and the bind would only complete *after*
+     * our timeout had already given up.
+     */
+    private void applyModemNv(int slot, VoConfig cfg) {
+        // Re-enabled 2026-05-29 after the QcRilHook OEM-hook write path
+        // was confirmed working with reqId=QCRILHOOK_CMD_SET=593925
+        // (legacy variant — see LgeModemNvWriter for the reasoning).
+        // Earlier crashes were caused by reqId=QCRILHOOK_NEW_CMD_SET=
+        // 593943 which our extracted qcrild has no handler for and
+        // wedged the binder transact, eventually leaving modemst1/2 in
+        // an inconsistent state across reboots. With the legacy ID the
+        // modem replies cleanly (rc=4) and survives reboot.
+        if (!mBootCompleted) {
+            // Pre-BOOT_COMPLETED: QcrilMsgTunnelService cannot bind yet
+            // (it is not directBootAware). The BOOT_COMPLETED kick from
+            // BootReceiver will re-trigger syncAllSlots(), and because
+            // mLastModemNv (not mLastEmitted) gates modem writes, the
+            // delta check below will detect "never written" and push
+            // the value through.
+            Log.d(TAG, "[slot " + slot + "] applyModemNv deferred: pre-BOOT_COMPLETED");
+            return;
+        }
+        VoConfig prev = mLastModemNv.get(slot);
+        boolean volteChanged  = prev == null || prev.volte  != cfg.volte;
+        boolean vowifiChanged = prev == null || prev.vowifi != cfg.vowifi;
+        if (!volteChanged && !vowifiChanged) {
+            return;
+        }
+        // Snapshot first; cfg may be mutated by the caller before the
+        // worker runs, and our delta check above already established
+        // intent.
+        VoConfig snap = new VoConfig();
+        snap.volte = cfg.volte;
+        snap.vilte = cfg.vilte;
+        snap.vowifi = cfg.vowifi;
+        snap.viwifi = cfg.viwifi;
+        snap.rcs = cfg.rcs;
+        mLastModemNv.put(slot, snap);
+
+        final boolean writeVolte  = volteChanged;
+        final boolean writeVowifi = vowifiChanged;
+        mModemNvExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                if (mModemNv == null) {
+                    mModemNv = new LgeModemNvWriter(LgeImsConfigBridgeService.this);
+                }
+                // Note: we don't bracket the writes with getItem reads
+                // because QCRILHOOK_CMD_GET on these CMD_IMS_* items
+                // returns GENERIC_FAILURE on this qcrild — the items
+                // appear to be write-only via that legacy reqId. The
+                // setCmdValue path itself responds with rc=4 which we
+                // log; trust that and move on.
+                if (writeVolte) {
+                    mModemNv.setVoLteEnabled(snap.volte);
+                }
+                if (writeVowifi) {
+                    mModemNv.setVoWiFiEnabled(snap.vowifi);
+                }
+            }
+        });
+    }
+
+    /**
+     * Re-emit the legacy {@code android.intent.action.SIM_STATE_CHANGED}
+     * broadcast that Ims6's {@code SIMStateAgent.SIMStateReceiverListener}
+     * still expects. AOSP TelephonyRegistry on Android 15 stopped sending
+     * it (replaced by ACTION_SIM_CARD_STATE_CHANGED + TelephonyCallback),
+     * but Ims6 was decompiled from Android-12-era stock framework and
+     * never updated. Without this, SIMStateAgent.mIccState stays
+     * "NOT_READY" forever, which trips ApnIms.connect's "apn is blocked,
+     * sim is not loaded" gate before it can even consider VoLTE.
+     *
+     * Extras format matches the pre-13 broadcast (see
+     * com.android.internal.telephony.IccCardConstants):
+     *   ss = "LOADED" | "READY" | "ABSENT" | "NOT_READY" | ...
+     *   subId / slot_index
+     */
+    private void broadcastSimStateLoaded(int slot, int subId) {
+        Intent i = new Intent("android.intent.action.SIM_STATE_CHANGED");
+        i.putExtra("ss", "LOADED");
+        i.putExtra("android.telephony.extra.SUBSCRIPTION_INDEX", subId);
+        i.putExtra("android.telephony.extra.SLOT_INDEX", slot);
+        i.putExtra("phoneName", "Phone");          // legacy IccCardConstants
+        i.putExtra("subscription", subId);          // older alias
+        i.putExtra("slot", slot);                   // older alias
+        i.putExtra("phone", slot);                  // older alias
+        i.setFlags(Intent.FLAG_RECEIVER_INCLUDE_BACKGROUND
+                | Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+        try {
+            sendBroadcast(i);
+            Log.i(TAG, "[slot " + slot + "] sent SIM_STATE_CHANGED ss=LOADED sub=" + subId);
+        } catch (SecurityException e) {
+            Log.e(TAG, "sendBroadcast(SIM_STATE_CHANGED) failed: " + e.getMessage());
+        }
     }
 
     /**
@@ -329,117 +484,66 @@ public class LgeImsConfigBridgeService extends Service {
      * both for maximum coverage.
      */
     private void applyMmTelSettings(int subId, VoConfig cfg) {
-        // *** THE REAL VOLTE GATE on this LineageOS port ***
+        // *** PROVISIONING + USER SETTINGS BOTH MATTER ***
         //
-        // Reverse-engineered from decompiled framework ims-common ImsManager
-        // (lge/decompiled/ims-common/sources/com/android/ims/ImsManager.java
-        //  line 1698 isVolteEnabledByPlatform):
+        // Two layers gate per-subscription IMS feature:
+        //   1. Provisioning  (carrier-controlled)  → ProvisioningManager
+        //                                            .setProvisioningStatusForCapability
+        //      Visible in `*#*#4636#*#*` → RadioInfo as "VoLTE/VT/WFC Provisioned" toggles.
+        //   2. User setting  (user-controlled)     → ImsMmTelManager.set*SettingEnabled
+        //      Visible in Settings → Network → SIM → "Enhanced 4G LTE Mode".
         //
-        //   if (debug_override_prop || voims_opt_in_status == 1) return true;
-        //   if (!FEATURE_VOLTE_OPEN) { ...AOSP carrier_config check... }
-        //   // FEATURE_VOLTE_OPEN branch:
-        //   if (persist.product.lge.supportvolte[.sim2] == 1) return true;
-        //   return false;
+        // Both must be ON for the feature to be active. Both must be OFF for
+        // it to be cleanly disabled (otherwise the LG stack may consult one
+        // and ignore the other — depends on which check path runs first).
         //
-        // The voims_opt_in_status check at the TOP overrides everything else.
-        // It lives in the SubscriptionManager subscription property table
-        // (telephony.db siminfo column "voims_opt_in_status"). On this device
-        // it was set to "1" for both subs by stock LG framework (and survived
-        // stock->LineageOS reflash because /data wasn't wiped). That's why
-        // toggling sysprops or Settings.Global has no effect — the gate
-        // returns true at line 1700 before ever reaching them.
-        //
-        // We write this property via SubscriptionManager.setSubscriptionProperty
-        // (hidden API on Android 15, reachable via reflection from a
-        // platform-uid app like ours). When 1: VoLTE forced enabled. When 0:
-        // VoLTE falls through to the legacy sysprop / carrier_config gate.
+        // We write both. Provisioning first, then user setting, so the
+        // capability change cascade evaluates the final state.
+
         try {
-            setSubscriptionProperty(subId, "voims_opt_in_status", cfg.volte ? "1" : "0");
+            ProvisioningManager pm = ProvisioningManager.createForSubscriptionId(subId);
+            if (pm != null) {
+                // Capabilities: VOICE=1, VIDEO=2, UT=3, SMS=4 (MmTelFeature.MmTelCapabilities)
+                // Techs: LTE=0, IWLAN=1, NR=2 (ImsRegistrationImplBase)
+                try { pm.setProvisioningStatusForCapability(
+                        MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
+                        ImsRegistrationImplBase.REGISTRATION_TECH_LTE,
+                        cfg.volte); } catch (Exception ignored) { }
+                try { pm.setProvisioningStatusForCapability(
+                        MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VIDEO,
+                        ImsRegistrationImplBase.REGISTRATION_TECH_LTE,
+                        cfg.vilte); } catch (Exception ignored) { }
+                try { pm.setProvisioningStatusForCapability(
+                        MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VOICE,
+                        ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN,
+                        cfg.vowifi); } catch (Exception ignored) { }
+                try { pm.setProvisioningStatusForCapability(
+                        MmTelFeature.MmTelCapabilities.CAPABILITY_TYPE_VIDEO,
+                        ImsRegistrationImplBase.REGISTRATION_TECH_IWLAN,
+                        cfg.viwifi); } catch (Exception ignored) { }
+                Log.i(TAG, "[sub=" + subId + "] Provisioning: voice/lte=" + cfg.volte
+                        + " video/lte=" + cfg.vilte + " voice/iwlan=" + cfg.vowifi
+                        + " video/iwlan=" + cfg.viwifi);
+            }
         } catch (Exception e) {
-            Log.w(TAG, "[sub=" + subId + "] voims_opt_in_status write failed: "
-                    + e.getMessage());
+            Log.w(TAG, "[sub=" + subId + "] Provisioning apply failed: " + e.getMessage());
         }
 
-        // 1. AOSP MmTel API — VT and VoWiFi switches. Public on Android 15.
+        // User setting layer (capability change cascade trigger).
         try {
             ImsManager im = getSystemService(ImsManager.class);
             if (im != null) {
                 ImsMmTelManager mm = im.getImsMmTelManager(subId);
                 if (mm != null) {
-                    try {
-                        mm.setVtSettingEnabled(cfg.vilte);
-                    } catch (Exception ignored) { }
-                    try {
-                        mm.setVoWiFiSettingEnabled(cfg.vowifi);
-                    } catch (Exception ignored) { }
-                    try {
-                        mm.setVoWiFiRoamingSettingEnabled(cfg.vowifi);
-                    } catch (Exception ignored) { }
+                    try { mm.setVtSettingEnabled(cfg.vilte); } catch (Exception ignored) { }
+                    try { mm.setVoWiFiSettingEnabled(cfg.vowifi); } catch (Exception ignored) { }
+                    try { mm.setVoWiFiRoamingSettingEnabled(cfg.vowifi); } catch (Exception ignored) { }
                     Log.i(TAG, "[sub=" + subId + "] MmTel: vilte=" + cfg.vilte
                             + " vowifi=" + cfg.vowifi);
                 }
             }
         } catch (Exception e) {
             Log.w(TAG, "[sub=" + subId + "] MmTel apply failed: " + e.getMessage());
-        }
-
-        // 2. Settings.Global — secondary gates that AOSP and OEM code paths
-        // also consult. Mirrors voims_opt_in for consistency.
-        try {
-            putGlobalInt(GS_VOLTE_VT_ENABLED + subId, cfg.volte ? 1 : 0);
-            putGlobalInt(GS_ENHANCED_4G_LTE + subId, cfg.volte ? 1 : 0);
-            putGlobalInt(GS_WFC_IMS_ENABLED + subId, cfg.vowifi ? 1 : 0);
-        } catch (Exception e) {
-            Log.w(TAG, "[sub=" + subId + "] Settings.Global write failed: "
-                    + e.getMessage());
-        }
-
-        // 3. Legacy LG per-slot sysprops. Empirically NOT a runtime gate on
-        // this port (proven by setting them to 0 with no effect on running
-        // IMS), but they're cheap to maintain and may be consulted by other
-        // OEM components we haven't audited (carrier reset path, settings UI).
-        // Slot-indexed; subId != slotId in general but on this device (DSDS
-        // with slot 0/1 == phoneId 0/1) they coincide.
-        int slot = mSm != null
-                ? mSm.getSlotIndex(subId)
-                : SubscriptionManager.INVALID_SIM_SLOT_INDEX;
-        if (slot == 0 || slot == 1) {
-            String suffix = slot == 0 ? "" : ".sim2";
-            setProp("persist.product.lge.supportvolte" + suffix,  cfg.volte  ? "1" : "0");
-            setProp("persist.product.lge.supportvt" + suffix,     cfg.vilte  ? "1" : "0");
-            setProp("persist.product.lge.supportvowifi" + suffix, cfg.vowifi ? "1" : "0");
-            setProp("persist.product.lge.supportviwifi" + suffix, cfg.viwifi ? "1" : "0");
-            setProp("persist.product.lge.supportrcs" + suffix,    cfg.rcs    ? "1" : "0");
-        }
-    }
-
-    /**
-     * SubscriptionManager.setSubscriptionProperty is hidden API on Android 15.
-     * We're a platform-uid app with system signature, so reflection works.
-     * Writes go to /data/user_de/0/com.android.providers.telephony/databases/telephony.db
-     * siminfo table, column matching the property name (e.g. voims_opt_in_status).
-     */
-    private void setSubscriptionProperty(int subId, String propertyName, String value)
-            throws Exception {
-        java.lang.reflect.Method m = SubscriptionManager.class.getMethod(
-                "setSubscriptionProperty",
-                int.class, String.class, String.class);
-        m.invoke(null, subId, propertyName, value);
-        Log.i(TAG, "[sub=" + subId + "] " + propertyName + "=" + value
-                + " (via setSubscriptionProperty)");
-    }
-
-    private void putGlobalInt(String key, int value) {
-        try {
-            int prev = Settings.Global.getInt(getContentResolver(), key, -1);
-            if (prev != value) {
-                Settings.Global.putInt(getContentResolver(), key, value);
-                Log.i(TAG, "Settings.Global " + key + "=" + value
-                        + " (was " + prev + ")");
-            }
-        } catch (SecurityException e) {
-            Log.e(TAG, "Settings.Global " + key + "=" + value
-                    + " denied: " + e.getMessage());
         }
     }
 

@@ -1,47 +1,56 @@
 # lge-ims-config-bridge
 
-System_ext app that replaces the runtime side of stock LG
-`ImsRadioConfigManager` and the UI side of stock `HiddenMenu`'s
-"Activate Vo Service" screen.
+System_ext app that controls per-SIM IMS feature toggles (VoLTE, ViLTE,
+VoWiFi, ViWiFi, RCS) on LineageOS for caymanslm.
 
-## Why
+Replaces the runtime gating that stock LG firmware does in
+`com.lge.internal.telephony.ImsRadioConfigManager` (framework.jar, not
+imported by LineageOS), and provides a UI for per-SIM toggles similar
+to stock HiddenMenu's "Activate Vo Service" screen.
 
-LineageOS 22.2 on caymanslm doesn't import `com.lge.internal.telephony.ImsRadioConfigManager`
-or `com.lge.internal.telephony.VoConfigParser` from stock LG `framework.jar`.
-Without them:
-* The per-slot LG IMS sysprops (`persist.product.lge.support{volte,vt,vowifi,viwifi,rcs}[.sim2]`)
-  are unset.
-* The sticky broadcast `com.lge.action.VOLTE_CHANGED_INFO` that
-  `Ims6.StateInfoChangedReceiver` subscribes to is never sent.
-* The user can't toggle IMS features per-SIM through the stock HiddenMenu UI
-  (HiddenMenu itself is in `/product/app/`, but its toggle target — the
-  IRCM/VoConfig pipeline — doesn't exist on LineageOS).
+## What it does
 
-This module replaces both pieces.
+For each active SIM, the service applies a `VoConfig` (5 booleans:
+volte / vilte / vowifi / viwifi / rcs) by writing to two AOSP layers:
 
-## Policy
+1. **`ProvisioningManager.setProvisioningStatusForCapability(...)`** —
+   carrier-provisioning state. This is what `*#*#4636#*#*` →
+   RadioInfo's "VoLTE Provisioned / VT Provisioned / WFC Provisioned"
+   toggles read.
+2. **`ImsMmTelManager.setVtSettingEnabled(...)` /
+   `setVoWiFiSettingEnabled(...)` / `setVoWiFiRoamingSettingEnabled(...)`** —
+   user-setting state. Triggers the LG IMS stack's MmTel feature
+   capability cascade.
 
-**Default-on.** For any SIM with no user override, the bridge writes
-`volte=1, vilte=1, vowifi=1, viwifi=1, rcs=0` sysprops and broadcasts the
-matching extras. Rationale:
+Both must be ON for IMS to register; both OFF causes
+`ImsRegCallbackHelper` to drop the registration within ~1 second
+(verified live via root logcat).
 
-* The modem does its own IMS subscription check and replies
-  `cause=33 SERVICE_OPTION_NOT_SUBSCRIBED` when a carrier really blocks
-  IMS — the sysprops are not the gate, they are an OEM informational hint.
-* Shipping a partial operator whitelist (like stock's regional
-  `vo_config.xml`) actively breaks unknown carriers. Most non-EU carriers
-  are missing from the stock EU XML.
-* Empirical 2026-05-27 tests on LineageOS show `cause=NONE` SETUP_DATA_CALL
-  on both slots regardless of per-slot sysprop value, confirming the
-  modem-side gate is independent.
+It also sends sticky `com.lge.action.VOLTE_CHANGED_INFO` matching stock
+LG wire format (Ims6's `StateInfoChangedReceiver` listens for this).
 
-**RCS off by default.** RCS requires carrier provisioning that we don't
-replicate; turning it on without provisioning produces noisy logs.
+Two global sysprops are set unconditionally on every boot — without
+them the LG IMS stack never starts:
+
+* `persist.product.lge.ims.volte_open=1`
+* `persist.vendor.lge.ims.dualvolte=1`
+
+## Default policy
+
+For any SIM with no user override saved: VoLTE=on, ViLTE=on, VoWiFi=on,
+ViWiFi=on, RCS=off. Reasoning:
+
+* The modem does its own subscription check during `SETUP_DATA_CALL
+  apn=ims` and replies `cause=33 SERVICE_OPTION_NOT_SUBSCRIBED` when a
+  carrier really blocks IMS. The Android-side flags don't gate the modem.
+* No operator whitelist is shipped. Stock's regional `vo_config.xml`
+  covers ~110 carriers and excludes most of the world; defaulting to off
+  for unknown carriers actively breaks legitimate users.
+* RCS is off because it requires separate provisioning we don't replicate.
 
 ## UI
 
-Launch "IMS / VoLTE Activator" from the launcher. The activity shows
-one card per active subscription:
+Launch **"IMS / VoLTE Activator"** from the launcher.
 
 ```
 Slot 0 — MTS RUS
@@ -53,32 +62,29 @@ MCC/MNC: 25001
 [ Apply ]   [ Reset to defaults ]
 ```
 
-Apply persists the per-ICCID override into SharedPreferences and kicks
-the service to re-apply. Reset drops the override and reverts to defaults.
+* **Apply** — persists the per-ICCID override into SharedPreferences and
+  kicks the service to re-apply immediately. Override is keyed by ICCID,
+  so it survives moving the SIM between slots.
+* **Reset to defaults** — drops the override; the SIM falls back to
+  defaults on the next sync.
 
-## Stock HiddenMenu compatibility
+## Stock vo_config.xml interop
 
-The bridge also accepts input from any caller using stock LG's
-`com.lge.action.ACTION_VO_CONFIG_UPDATE` protocol — same one stock
-HiddenMenu uses internally:
-1. Caller writes `/data/shared/cust/config/vo_config.xml`
-2. Caller sends sticky `com.lge.action.ACTION_VO_CONFIG_UPDATE`
+`VoConfigUpdateReceiver` listens for sticky
+`com.lge.action.ACTION_VO_CONFIG_UPDATE` (the broadcast stock
+HiddenMenu's "Activate Vo Service" sends after writing
+`/data/shared/cust/config/vo_config.xml`). When received the service
+re-parses the XML, runs the same 8-tier specificity match stock
+`VoConfigParser` uses (mcc → mnc → gid → spn → imsi), and persists
+each matched SIM's choice as a per-ICCID override.
 
-`VoConfigUpdateReceiver` listens for that action and forwards it to the
-service, which re-parses the XML, runs the same 8-tier specificity match
-stock `VoConfigParser` uses (mcc + mnc + gid + spn + imsi → catch-all),
-and persists each matched SIM's choice as a per-ICCID override. The
-result is identical to using our own UI activity.
-
-This is a passive interop layer — we don't depend on stock HiddenMenu
-being present, and we don't trigger it. It just means anything else in
-the system that produces stock-style `vo_config.xml` and the broadcast
-will be picked up.
+Passive interop only — we don't trigger or depend on the stock
+producer; anything that follows the protocol gets picked up.
 
 ## Pipeline
 
 ```
-boot / SIM hot-swap
+boot / SIM hot-swap / Apply
        │
        ▼
 LgeImsConfigBridgeService.syncAllSlots()
@@ -86,18 +92,19 @@ LgeImsConfigBridgeService.syncAllSlots()
        ├─ for each active sub: resolveConfig(iccid)
        │     └─ SharedPreferences override OR VoConfig.defaults()
        │
-       ├─ writeSyspropsForSlot(slot, cfg)
-       │     └─ persist.product.lge.support{volte,vt,vowifi,viwifi,rcs}[.sim2]
+       ├─ applyMmTelSettings(subId, cfg)
+       │     ├─ ProvisioningManager.setProvisioningStatusForCapability
+       │     │     VOICE/LTE, VIDEO/LTE, VOICE/IWLAN, VIDEO/IWLAN
+       │     │     ↳ visible in *#*#4636#*#* RadioInfo
+       │     │
+       │     └─ ImsMmTelManager.setVt/VoWiFi/VoWiFiRoamingSettingEnabled
+       │           ↳ triggers MmTel capability change cascade
+       │           ↳ ImsRegCallbackHelper drops registration if all caps off
        │
-       └─ broadcastVolteChanged(slot, cfg)
-             └─ sendStickyBroadcast com.lge.action.VOLTE_CHANGED_INFO
-                  extras: volte/volte2, vilte/vilte2, vowifi/vowifi2, rcs/rcs2
-                  (Ims6.StateInfoChangedReceiver consumes this)
+       └─ sendStickyBroadcast com.lge.action.VOLTE_CHANGED_INFO
+             extras: volte/volte2, vilte/vilte2, vowifi/vowifi2, rcs/rcs2
+             ↳ Ims6.StateInfoChangedReceiver consumes for policy update
 ```
-
-Globals `persist.product.lge.ims.volte_open=1` and
-`persist.vendor.lge.ims.dualvolte=1` are set unconditionally on service
-start. These are required by the LG IMS stack regardless of per-slot config.
 
 ## Build
 
@@ -109,7 +116,8 @@ PRODUCT_PACKAGES += LgeImsConfigBridge
 m LgeImsConfigBridge && m systemextimage
 ```
 
-Installed to:
+Installs:
+
 * `/system_ext/priv-app/LgeImsConfigBridge/LgeImsConfigBridge.apk`
 * `/system_ext/etc/permissions/permissions_com.lineageos.lgeimsconfigbridge.xml`
 
@@ -119,34 +127,63 @@ Installed to:
 # Service lifecycle
 adb logcat | grep LgeImsCfg
 
-# Sysprops written by us
-adb shell getprop | grep -E 'persist\.product\.lge\.support|persist\.product\.lge\.ims|persist\.vendor\.lge\.ims'
+# Live IMS state — toggling Apply should flip these within ~1 second:
+adb logcat | grep -E 'ImsRegCallbackHelper|MmTel Capabilities'
 
-# IMS bring-up should follow on both slots
+# RadioInfo's view (4636 → IMS Service Configuration):
+adb shell am start -n com.android.phone/.settings.RadioInfo
+
+# Globals required by the stack:
+adb shell getprop | grep -E 'persist\.product\.lge\.ims\.volte_open|persist\.vendor\.lge\.ims\.dualvolte'
+
+# First SETUP_DATA_CALL apn=ims should be cause=NONE:
 adb logcat -b radio | grep -E 'SETUP_DATA_CALL.*ims|cause=NONE|cause=33'
-adb shell dumpsys telephony.registry | grep -E 'mImsRegistered|MmTel'
 ```
+
+When all checkboxes are unchecked + Apply: expect logcat to show
+`ImsRegCallbackHelper: REGISTRATION_STATE_REGISTERED → REGISTRATION_STATE_NOT_REGISTERED`
+within ~1 second. Re-checking + Apply reverses it.
 
 ## Persistence
 
-* SharedPreferences live in `/data/user_de/0/com.lineageos.lgeimsconfigbridge/shared_prefs/ims_overrides.xml`
+* User overrides live in
+  `/data/user_de/0/com.lineageos.lgeimsconfigbridge/shared_prefs/ims_overrides.xml`
   (Direct Boot aware, available before user unlock).
-* The service is `android:directBootAware="true"` so it runs from the
-  earliest boot phase.
-* `android:persistent="true"` on the application keeps the SubscriptionManager
-  listener alive past force-stop.
+* `android:directBootAware="true"` lets the service run from the earliest
+  boot phase (LOCKED_BOOT_COMPLETED).
+* `android:persistent="true"` keeps the SubscriptionManager listener
+  alive past force-stop.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `Android.bp` | Soong module — compiles APK, installs privapp whitelist. |
-| `AndroidManifest.xml` | Activity (LAUNCHER), Service, BootReceiver. |
-| `permissions_com.lineageos.lgeimsconfigbridge.xml` | Privapp whitelist. |
-| `src/.../LgeImsConfigBridgeService.java` | Sysprop writer + broadcast sender. |
+| `AndroidManifest.xml` | Activity (LAUNCHER), Service, BootReceiver, VoConfigUpdateReceiver. |
+| `permissions_com.lineageos.lgeimsconfigbridge.xml` | Privapp whitelist (READ_PRIVILEGED_PHONE_STATE, MODIFY_PHONE_STATE, WRITE_SECURE_SETTINGS, PERFORM_IMS_SINGLE_REGISTRATION). |
+| `src/.../LgeImsConfigBridgeService.java` | Provisioning + MmTel writer + broadcast sender + vo_config.xml import. |
 | `src/.../MainActivity.java` | UI for per-SIM override. |
-| `src/.../BootReceiver.java` | Starts the service on boot. |
+| `src/.../BootReceiver.java` | Starts the service on BOOT_COMPLETED + LOCKED_BOOT_COMPLETED. |
+| `src/.../VoConfigUpdateReceiver.java` | Stock vo_config.xml interop receiver. |
 | `res/layout/activity_main.xml` | Top-level scrollable layout. |
 | `res/layout/slot_card.xml` | Per-SIM card with checkboxes. |
 | `res/values/strings.xml` | UI strings (translatable). |
 | `res/values/styles.xml` | App theme. |
+
+## What does NOT work / was removed
+
+These were tried in earlier versions and confirmed empirically to be
+no-ops on this LineageOS porting surface:
+
+* Per-slot `persist.product.lge.support{volte,vt,vowifi,viwifi,rcs}[.sim2]`
+  sysprops — not consulted at runtime by the LG IMS stack on this port.
+* `Settings.Global.volte_vt_enabled<subId>` / `enhanced_4g_lte_mode_enabled<subId>` /
+  `wfc_ims_enabled<subId>` — Android 15 pipeline doesn't gate on these.
+* `siminfo.voims_opt_in_status` (via reflection on
+  `SubscriptionManager.setSubscriptionProperty`) — written but ignored
+  by the registration pipeline.
+* Operator whitelist (`vo_config.xml` shipped with the module) —
+  partial coverage, broke unknown carriers.
+
+What replaced them is the two-layer ProvisioningManager + ImsMmTelManager
+approach above, verified to flip live registration state.

@@ -19,6 +19,8 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.telephony.SubscriptionInfo;
 import android.telephony.SubscriptionManager;
 import android.telephony.TelephonyManager;
@@ -32,15 +34,29 @@ import android.widget.TextView;
 import android.widget.Toast;
 
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 import com.lineageos.lgeimsconfigbridge.LgeImsConfigBridgeService.VoConfig;
 
 public class MainActivity extends Activity {
 
+    /**
+     * Single shared worker for the modem-NV read/write buttons. We
+     * cannot run those on the main thread because the QcrilMsgTunnel
+     * binder bind is signalled via a ServiceConnection callback that
+     * lands on the main thread — blocking the UI thread to wait for
+     * it deadlocks the bind.
+     */
+    private final ExecutorService mModemNvExecutor = Executors.newSingleThreadExecutor();
+    private final Handler mUi = new Handler(Looper.getMainLooper());
+    private LgeModemNvWriter mModemNv;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        bindModemNvSection();
     }
 
     @Override
@@ -183,4 +199,67 @@ public class MainActivity extends Activity {
     }
 
     private static String nullToEmpty(String s) { return s == null ? "" : s; }
+
+    // ---------- Modem NV (Advanced) section ----------
+
+    private void bindModemNvSection() {
+        TextView status = findViewById(R.id.modem_nv_status);
+        Button btnRead     = findViewById(R.id.btn_modem_nv_read);
+        Button btnWriteVl  = findViewById(R.id.btn_modem_nv_write_volte_on);
+        Button btnWriteVw  = findViewById(R.id.btn_modem_nv_write_vowifi_on);
+
+        btnRead.setOnClickListener(v -> {
+            status.setText("Reading…");
+            mModemNvExecutor.execute(() -> {
+                LgeModemNvWriter w = ensureWriter();
+                StringBuilder sb = new StringBuilder();
+                // Try both phones; on this stack we have observed
+                // QcrilMsgTunnel forwards what=1 but qcrild doesn't
+                // dispatch — possibly because the OEM-hook handler is
+                // bound per-phone and only registers on whichever phone
+                // had its RIL initialised. Probing both lets us tell
+                // which (if any) actually answers.
+                for (int phone = 0; phone <= 1; phone++) {
+                    String vlt    = w.getItem(LgeModemNvWriter.CMD_IMS_VLT,    phone);
+                    String vowifi = w.getItem(LgeModemNvWriter.CMD_IMS_VOWIFI, phone);
+                    sb.append("phone=").append(phone)
+                      .append(" VLT=").append(vlt)
+                      .append(" VOWIFI=").append(vowifi)
+                      .append("\n");
+                }
+                final String text = sb.toString();
+                mUi.post(() -> status.setText(text));
+            });
+        });
+
+        btnWriteVl.setOnClickListener(v -> writeAsync(status,
+                LgeModemNvWriter.CMD_IMS_VLT, "1"));
+        btnWriteVw.setOnClickListener(v -> writeAsync(status,
+                LgeModemNvWriter.CMD_IMS_VOWIFI, "1"));
+    }
+
+    private void writeAsync(TextView status, int cmdId, String value) {
+        status.setText("Writing CMD=" + cmdId + " value=" + value + " …");
+        mModemNvExecutor.execute(() -> {
+            LgeModemNvWriter w = ensureWriter();
+            String before = w.getItem(cmdId);
+            boolean ok = w.setItem(cmdId, value);
+            String after = w.getItem(cmdId);
+            String text = "CMD=" + cmdId + " write " + (ok ? "OK" : "FAILED")
+                    + "\n  before=" + before
+                    + "\n  after=" + after;
+            mUi.post(() -> status.setText(text));
+        });
+    }
+
+    private synchronized LgeModemNvWriter ensureWriter() {
+        if (mModemNv == null) mModemNv = new LgeModemNvWriter(this);
+        return mModemNv;
+    }
+
+    @Override
+    protected void onDestroy() {
+        mModemNvExecutor.shutdownNow();
+        super.onDestroy();
+    }
 }
